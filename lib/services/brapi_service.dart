@@ -1,7 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/stock.dart';
 
@@ -16,8 +16,18 @@ class BrapiService {
   BrapiService({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
-  static const _baseUrl = 'https://brapi.dev/api';
-  String get _token => dotenv.env['BRAPI_TOKEN']?.trim() ?? '';
+  static const _configuredBaseUrl = String.fromEnvironment('BRAPI_BASE_URL');
+  static const _nativeToken = String.fromEnvironment('BRAPI_TOKEN');
+
+  String get _baseUrl => _configuredBaseUrl.isNotEmpty
+      ? _configuredBaseUrl
+      : kIsWeb
+          ? 'http://localhost:8080/api'
+          : 'https://brapi.dev/api';
+
+  // Tokens nunca devem ser enviados no bundle Web. No navegador, o proxy
+  // adiciona a credencial no servidor.
+  String get _token => kIsWeb ? '' : _nativeToken.trim();
 
   Map<String, String> get _headers => {
         'Accept': 'application/json',
