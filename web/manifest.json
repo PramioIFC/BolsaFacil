@@ -1,0 +1,11 @@
+{
+  "name": "Bolsa Fácil",
+  "short_name": "Bolsa Fácil",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F7F8FC",
+  "theme_color": "#6558F5",
+  "description": "Acompanhe ações brasileiras.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
+}
