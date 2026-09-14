@@ -95,8 +95,25 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
               onSelected: chartLoading ? null : (_) => _load(period.key),
             )).toList(),
           ),
+          if (current.history.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              '${_fullDate(current.history.first.date)} — '
+              '${_fullDate(current.history.last.date)}  •  '
+              '${current.history.length} pregões',
+              style: const TextStyle(color: Colors.blueGrey, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 20),
-          SizedBox(height: 250, child: current.history.isEmpty ? _ChartLoading(error: error) : _PriceChart(stock: current)),
+          SizedBox(
+            height: selectedRange == '1y' ? 340 : 270,
+            child: current.history.isEmpty
+                ? _ChartLoading(error: error)
+                : _PriceChart(
+                    stock: current,
+                    range: selectedRange,
+                  ),
+          ),
         ]))),
         const SizedBox(height: 16),
         Card(child: Padding(padding: const EdgeInsets.all(18), child: Row(children: [
@@ -295,15 +312,17 @@ class _OrderTotal extends StatelessWidget {
 }
 
 class _PriceChart extends StatelessWidget {
-  const _PriceChart({required this.stock});
+  const _PriceChart({required this.stock, required this.range});
   final Stock stock;
+  final String range;
   @override
   Widget build(BuildContext context) {
     final spots = [for (var i = 0; i < stock.history.length; i++) FlSpot(i.toDouble(), stock.history[i].close)];
     final rising = stock.history.last.close >= stock.history.first.close;
     final color = rising ? positive : negative;
+    final labelDivisions = range == '1y' ? 6 : 4;
     final labelInterval = stock.history.length > 1
-        ? (stock.history.length - 1) / 4
+        ? (stock.history.length - 1) / labelDivisions
         : 1.0;
     return LineChart(LineChartData(
       minX: 0,
@@ -327,7 +346,7 @@ class _PriceChart extends StatelessWidget {
                 axisSide: meta.axisSide,
                 space: 9,
                 child: Text(
-                  '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}',
+                  range == '1y' ? _monthYear(date) : _dayMonth(date),
                   style: const TextStyle(color: Colors.blueGrey, fontSize: 11),
                 ),
               );
@@ -336,7 +355,14 @@ class _PriceChart extends StatelessWidget {
         ),
       ),
       borderData: FlBorderData(show: false),
-      lineTouchData: LineTouchData(touchTooltipData: LineTouchTooltipData(getTooltipColor: (_) => ink, getTooltipItems: (items) => items.map((item) => LineTooltipItem(money(item.y), const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))).toList())),
+      lineTouchData: LineTouchData(touchTooltipData: LineTouchTooltipData(getTooltipColor: (_) => ink, getTooltipItems: (items) => items.map((item) {
+        final index = item.x.round().clamp(0, stock.history.length - 1);
+        final date = stock.history[index].date;
+        return LineTooltipItem(
+          '${_fullDate(date)}\n${money(item.y)}',
+          const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+        );
+      }).toList())),
       lineBarsData: [LineChartBarData(spots: spots, isCurved: true, curveSmoothness: .2, color: color, barWidth: 3, dotData: const FlDotData(show: false), belowBarData: BarAreaData(show: true, gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [color.withValues(alpha: .25), color.withValues(alpha: 0)])))],
     ));
   }
@@ -362,3 +388,12 @@ String _compact(double value) {
   if (value >= 1e9) return 'R\$ ${(value / 1e9).toStringAsFixed(1)} bi';
   return money(value);
 }
+
+String _dayMonth(DateTime date) =>
+    '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}';
+
+String _monthYear(DateTime date) =>
+    '${date.month.toString().padLeft(2, '0')}/${date.year.toString().substring(2)}';
+
+String _fullDate(DateTime date) =>
+    '${_dayMonth(date)}/${date.year.toString()}';
