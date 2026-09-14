@@ -43,7 +43,12 @@ class BrapiService {
     // Consultas individuais também evitam perder toda a lista caso um ativo
     // específico esteja indisponível.
     final requests = symbols
-        .map((symbol) => _getSingleQuote(symbol, historical: historical))
+        .map(
+          (symbol) => _getSingleQuote(
+            symbol,
+            range: historical ? '3mo' : null,
+          ),
+        )
         .toList();
     final results = await Future.wait(requests);
     final stocks = results.whereType<Stock>().toList();
@@ -60,12 +65,12 @@ class BrapiService {
 
   Future<Stock?> _getSingleQuote(
     String symbol, {
-    required bool historical,
+    String? range,
   }) async {
     final normalized = symbol.trim().toUpperCase();
     final query = <String, String>{
-      if (historical) 'range': '3mo',
-      if (historical) 'interval': '1d',
+      if (range != null) 'range': range,
+      if (range != null) 'interval': '1d',
       if (_token.isNotEmpty) 'token': _token,
     };
     final uri = Uri.parse(
@@ -86,8 +91,8 @@ class BrapiService {
     return stocks.isEmpty ? null : stocks.first;
   }
 
-  Future<Stock> getQuote(String symbol) async {
-    final stock = await _getSingleQuote(symbol, historical: true);
+  Future<Stock> getQuote(String symbol, {String range = '3mo'}) async {
+    final stock = await _getSingleQuote(symbol, range: range);
     if (stock == null) throw const BrapiException('Ação não encontrada.');
     return stock;
   }

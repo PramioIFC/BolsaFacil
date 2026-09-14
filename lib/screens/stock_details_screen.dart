@@ -18,6 +18,15 @@ class StockDetailsScreen extends StatefulWidget {
 class _StockDetailsScreenState extends State<StockDetailsScreen> {
   Stock? stock;
   String? error;
+  String selectedRange = '3mo';
+  bool chartLoading = true;
+
+  static const periods = {
+    '5d': '5 dias',
+    '1mo': '1 mês',
+    '3mo': '3 meses',
+    '1y': '1 ano',
+  };
 
   @override
   void initState() {
@@ -26,12 +35,23 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load([String? range]) async {
+    final requestedRange = range ?? selectedRange;
+    setState(() {
+      selectedRange = requestedRange;
+      chartLoading = true;
+      error = null;
+    });
     try {
-      final value = await widget.state.api.getQuote(widget.initialStock.symbol);
+      final value = await widget.state.api.getQuote(
+        widget.initialStock.symbol,
+        range: requestedRange,
+      );
       if (mounted) setState(() => stock = value);
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => chartLoading = false);
     }
   }
 
@@ -61,9 +81,22 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
         ]),
         const SizedBox(height: 26),
         Card(child: Padding(padding: const EdgeInsets.fromLTRB(16, 20, 16, 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Histórico • 3 meses', style: TextStyle(fontWeight: FontWeight.w800, color: ink)),
-          const SizedBox(height: 24),
-          SizedBox(height: 230, child: current.history.isEmpty ? _ChartLoading(error: error) : _PriceChart(stock: current)),
+          Row(children: [
+            Expanded(child: Text('Histórico • ${periods[selectedRange]}', style: const TextStyle(fontWeight: FontWeight.w800, color: ink))),
+            if (chartLoading) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+          ]),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: periods.entries.map((period) => ChoiceChip(
+              label: Text(period.value),
+              selected: selectedRange == period.key,
+              onSelected: chartLoading ? null : (_) => _load(period.key),
+            )).toList(),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(height: 250, child: current.history.isEmpty ? _ChartLoading(error: error) : _PriceChart(stock: current)),
         ]))),
         const SizedBox(height: 16),
         Card(child: Padding(padding: const EdgeInsets.all(18), child: Row(children: [
@@ -269,9 +302,39 @@ class _PriceChart extends StatelessWidget {
     final spots = [for (var i = 0; i < stock.history.length; i++) FlSpot(i.toDouble(), stock.history[i].close)];
     final rising = stock.history.last.close >= stock.history.first.close;
     final color = rising ? positive : negative;
+    final labelInterval = stock.history.length > 1
+        ? (stock.history.length - 1) / 4
+        : 1.0;
     return LineChart(LineChartData(
+      minX: 0,
+      maxX: stock.history.length > 1
+          ? (stock.history.length - 1).toDouble()
+          : 1,
       gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (_) => FlLine(color: const Color(0xFFEFF1F7), strokeWidth: 1)),
-      titlesData: const FlTitlesData(leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)), rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)), topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)), bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false))),
+      titlesData: FlTitlesData(
+        leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        bottomTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 32,
+            interval: labelInterval,
+            getTitlesWidget: (value, meta) {
+              final index = value.round().clamp(0, stock.history.length - 1);
+              final date = stock.history[index].date;
+              return SideTitleWidget(
+                axisSide: meta.axisSide,
+                space: 9,
+                child: Text(
+                  '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}',
+                  style: const TextStyle(color: Colors.blueGrey, fontSize: 11),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
       borderData: FlBorderData(show: false),
       lineTouchData: LineTouchData(touchTooltipData: LineTouchTooltipData(getTooltipColor: (_) => ink, getTooltipItems: (items) => items.map((item) => LineTooltipItem(money(item.y), const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))).toList())),
       lineBarsData: [LineChartBarData(spots: spots, isCurved: true, curveSmoothness: .2, color: color, barWidth: 3, dotData: const FlDotData(show: false), belowBarData: BarAreaData(show: true, gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [color.withValues(alpha: .25), color.withValues(alpha: 0)])))],
