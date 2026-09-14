@@ -71,7 +71,192 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
           Container(width: 1, height: 38, color: Colors.blueGrey.shade100),
           Expanded(child: _Metric(label: 'Valor de mercado', value: current.marketCap == null ? '—' : _compact(current.marketCap!))),
         ]))),
+        const SizedBox(height: 16),
+        _BuyCard(state: widget.state, stock: current),
       ]),
+    );
+  }
+}
+
+class _BuyCard extends StatefulWidget {
+  const _BuyCard({required this.state, required this.stock});
+
+  final AppState state;
+  final Stock stock;
+
+  @override
+  State<_BuyCard> createState() => _BuyCardState();
+}
+
+class _BuyCardState extends State<_BuyCard> {
+  final quantityController = TextEditingController(text: '1');
+  bool saving = false;
+
+  double get quantity =>
+      double.tryParse(quantityController.text.replaceAll(',', '.')) ?? 0;
+
+  @override
+  void dispose() {
+    quantityController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _buy() async {
+    if (quantity <= 0 || saving) return;
+    setState(() => saving = true);
+    final purchasedQuantity = quantity;
+    try {
+      await widget.state.buy(
+        widget.stock.symbol,
+        purchasedQuantity,
+        widget.stock.price,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${purchasedQuantity.toStringAsFixed(2)} ações de '
+            '${widget.stock.symbol} adicionadas à carteira.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.shopping_cart_outlined, color: primary),
+                SizedBox(width: 10),
+                Text(
+                  'Compra simulada',
+                  style: TextStyle(
+                    color: ink,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Adicione esta ação à sua carteira pelo preço atual.',
+              style: TextStyle(color: Colors.blueGrey),
+            ),
+            const SizedBox(height: 20),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 520;
+                final quantityField = TextField(
+                  controller: quantityController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Quantidade',
+                    prefixIcon: Icon(Icons.numbers_rounded),
+                  ),
+                );
+                final total = _OrderTotal(
+                  unitPrice: widget.stock.price,
+                  total: widget.stock.price * quantity,
+                );
+                if (compact) {
+                  return Column(
+                    children: [
+                      quantityField,
+                      const SizedBox(height: 16),
+                      total,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: quantityField),
+                    const SizedBox(width: 24),
+                    Expanded(child: total),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton.icon(
+                onPressed: quantity > 0 && !saving ? _buy : null,
+                icon: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.add_shopping_cart_rounded),
+                label: Text(saving ? 'Adicionando...' : 'Comprar agora'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Center(
+              child: Text(
+                'Simulação educacional — nenhuma ordem real será enviada.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.blueGrey, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderTotal extends StatelessWidget {
+  const _OrderTotal({required this.unitPrice, required this.total});
+
+  final double unitPrice;
+  final double total;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0EFFF),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Cotação: ${money(unitPrice)}',
+            style: const TextStyle(color: Colors.blueGrey, fontSize: 12),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Total: ${money(total)}',
+            style: const TextStyle(
+              color: ink,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

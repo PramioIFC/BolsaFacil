@@ -74,6 +74,33 @@ class AppState extends ChangeNotifier {
     if (!stocks.any((stock) => stock.symbol == item.symbol)) await refresh();
   }
 
+  Future<void> buy(String symbol, double quantity, double price) async {
+    final normalized = symbol.trim().toUpperCase();
+    final existing = portfolio.where((item) => item.symbol == normalized);
+    if (existing.isEmpty) {
+      await savePosition(
+        PortfolioItem(
+          symbol: normalized,
+          quantity: quantity,
+          averagePrice: price,
+        ),
+      );
+      return;
+    }
+
+    final current = existing.first;
+    final totalQuantity = current.quantity + quantity;
+    final averagePrice =
+        (current.invested + (quantity * price)) / totalQuantity;
+    await savePosition(
+      PortfolioItem(
+        symbol: normalized,
+        quantity: totalQuantity,
+        averagePrice: averagePrice,
+      ),
+    );
+  }
+
   Future<void> removePosition(String symbol) async {
     portfolio = portfolio.where((e) => e.symbol != symbol).toList();
     await _savePortfolio();
