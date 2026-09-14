@@ -4,6 +4,7 @@ import '../models/portfolio_item.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/stock_tile.dart';
+import 'stock_details_screen.dart';
 
 class PortfolioScreen extends StatelessWidget {
   const PortfolioScreen({super.key, required this.state});
@@ -30,12 +31,40 @@ class PortfolioScreen extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 90),
                 itemCount: state.portfolio.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (_, i) => _PositionCard(item: state.portfolio[i], state: state, onEdit: () => _positionDialog(context, state.portfolio[i])),
+                itemBuilder: (_, i) => _PositionCard(
+                  item: state.portfolio[i],
+                  state: state,
+                  onEdit: () => _positionDialog(context, state.portfolio[i]),
+                  onTap: () => _openDetails(context, state.portfolio[i]),
+                ),
               )),
             ])),
           );
         },
       );
+
+  Future<void> _openDetails(
+    BuildContext context,
+    PortfolioItem item,
+  ) async {
+    try {
+      final stock = state.stockFor(item.symbol) ?? await state.search(item.symbol);
+      if (!context.mounted || stock == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => StockDetailsScreen(
+            state: state,
+            initialStock: stock,
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    }
+  }
 
   Future<void> _positionDialog(BuildContext context, [PortfolioItem? existing]) async {
     final symbol = TextEditingController(text: existing?.symbol ?? '');
@@ -86,17 +115,36 @@ class _WhiteMetric extends StatelessWidget {
 }
 
 class _PositionCard extends StatelessWidget {
-  const _PositionCard({required this.item, required this.state, required this.onEdit});
-  final PortfolioItem item; final AppState state; final VoidCallback onEdit;
+  const _PositionCard({
+    required this.item,
+    required this.state,
+    required this.onEdit,
+    required this.onTap,
+  });
+  final PortfolioItem item;
+  final AppState state;
+  final VoidCallback onEdit;
+  final VoidCallback onTap;
   @override
   Widget build(BuildContext context) {
     final price = state.stockFor(item.symbol)?.price ?? item.averagePrice;
     final result = (price - item.averagePrice) * item.quantity;
-    return Card(child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(item.symbol, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: ink)), const SizedBox(height: 5), Text('${item.quantity.toStringAsFixed(2)} ações • PM ${money(item.averagePrice)}', style: const TextStyle(color: Colors.blueGrey, fontSize: 12))])),
-      Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(money(price * item.quantity), style: const TextStyle(fontWeight: FontWeight.w800, color: ink)), Text('${result >= 0 ? '+' : ''}${money(result)}', style: TextStyle(color: result >= 0 ? positive : negative, fontWeight: FontWeight.w700))]),
-      PopupMenuButton<String>(onSelected: (value) => value == 'edit' ? onEdit() : state.removePosition(item.symbol), itemBuilder: (_) => const [PopupMenuItem(value: 'edit', child: Text('Editar')), PopupMenuItem(value: 'remove', child: Text('Remover'))]),
-    ])));
+    return Card(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(item.symbol, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: ink)), const SizedBox(height: 5), Text('${item.quantity.toStringAsFixed(2)} ações • PM ${money(item.averagePrice)}', style: const TextStyle(color: Colors.blueGrey, fontSize: 12))])),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(money(price * item.quantity), style: const TextStyle(fontWeight: FontWeight.w800, color: ink)), Text('${result >= 0 ? '+' : ''}${money(result)}', style: TextStyle(color: result >= 0 ? positive : negative, fontWeight: FontWeight.w700))]),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right_rounded, color: Colors.blueGrey),
+            PopupMenuButton<String>(onSelected: (value) => value == 'edit' ? onEdit() : state.removePosition(item.symbol), itemBuilder: (_) => const [PopupMenuItem(value: 'edit', child: Text('Editar')), PopupMenuItem(value: 'remove', child: Text('Remover'))]),
+          ]),
+        ),
+      ),
+    );
   }
 }
 
