@@ -48,8 +48,11 @@ class BrapiService {
     final results = await Future.wait(requests);
     final stocks = results.whereType<Stock>().toList();
     if (stocks.isEmpty) {
-      throw const BrapiException(
-        'Não foi possível carregar as cotações. Confira seu token da brapi.',
+      throw BrapiException(
+        kIsWeb
+            ? 'O proxy da brapi não está acessível. Execute '
+                '.\\run_web.ps1 para iniciar o app.'
+            : 'Não foi possível carregar as cotações. Confira seu token da brapi.',
       );
     }
     return stocks;
@@ -68,10 +71,13 @@ class BrapiService {
     final uri = Uri.parse(
       '$_baseUrl/quote/$normalized',
     ).replace(queryParameters: query);
-    final response = await _client.get(uri, headers: _headers);
-    if (response.statusCode != 200) {
+    http.Response response;
+    try {
+      response = await _client.get(uri, headers: _headers);
+    } on http.ClientException {
       return null;
     }
+    if (response.statusCode != 200) return null;
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final stocks = (data['results'] as List<dynamic>? ?? [])
         .whereType<Map<String, dynamic>>()

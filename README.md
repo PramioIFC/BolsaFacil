@@ -18,8 +18,14 @@ App Flutter para acompanhar ações brasileiras usando a [brapi.dev](https://bra
 BRAPI_TOKEN=seu_token_aqui
 ```
 
-3. Para executar no Chrome, abra dois terminais. No primeiro, inicie o proxy
-   local que mantém o token fora do navegador:
+3. No Windows, inicie proxy e aplicativo com um único comando:
+
+```powershell
+.\run_web.ps1
+```
+
+Alternativamente, abra dois terminais. No primeiro, inicie o proxy local que
+mantém o token fora do navegador:
 
 ```bash
 dart run tool/brapi_proxy.dart
