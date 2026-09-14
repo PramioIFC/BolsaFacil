@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../state/app_state.dart';
+import 'account_screen.dart';
 import 'favorites_screen.dart';
 import 'home_screen.dart';
 import 'portfolio_screen.dart';
@@ -22,6 +23,7 @@ class _AppShellState extends State<AppShell> {
       HomeScreen(state: widget.state),
       FavoritesScreen(state: widget.state),
       PortfolioScreen(state: widget.state),
+      AccountScreen(state: widget.state),
     ];
     return Scaffold(
       body: SafeArea(child: IndexedStack(index: index, children: pages)),
@@ -32,6 +34,7 @@ class _AppShellState extends State<AppShell> {
           NavigationDestination(icon: Icon(Icons.candlestick_chart_outlined), selectedIcon: Icon(Icons.candlestick_chart), label: 'Início'),
           NavigationDestination(icon: Icon(Icons.star_outline_rounded), selectedIcon: Icon(Icons.star_rounded), label: 'Favoritas'),
           NavigationDestination(icon: Icon(Icons.account_balance_wallet_outlined), selectedIcon: Icon(Icons.account_balance_wallet_rounded), label: 'Carteira'),
+          NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'Conta'),
         ],
       ),
     );

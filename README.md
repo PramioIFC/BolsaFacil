@@ -6,8 +6,13 @@ App Flutter para acompanhar ações brasileiras usando a [brapi.dev](https://bra
 
 - Lista de ações com preço, variação e busca por ticker
 - Detalhes da empresa e gráfico histórico
-- Favoritos persistidos no dispositivo
-- Carteira simulada com cálculo de posição e lucro/prejuízo
+- Cadastro, login e sessão persistente em SQLite
+- Favoritos e carteira separados por conta
+- Carteira simulada com preço médio, valor atual e lucro/prejuízo
+
+No Flutter Web, o banco SQLite é executado em WebAssembly e persistido pelo
+navegador. As contas e carteiras são locais ao dispositivo/navegador; não são
+sincronizadas entre aparelhos.
 
 ## Executar
 

@@ -1,16 +1,16 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../database/app_database.dart';
 import '../models/portfolio_item.dart';
 import '../models/stock.dart';
+import '../models/user_account.dart';
 import '../services/brapi_service.dart';
 
 class AppState extends ChangeNotifier {
-  AppState(this.api);
+  AppState(this.api, this.database);
 
   final BrapiService api;
+  final AppDatabase database;
   static const defaultSymbols = [
     'PETR4', 'VALE3', 'ITUB4', 'BBDC4', 'ABEV3', 'WEGE3', 'BBAS3', 'MGLU3'
   ];
@@ -19,19 +19,59 @@ class AppState extends ChangeNotifier {
   Set<String> favorites = {};
   List<PortfolioItem> portfolio = [];
   bool loading = false;
+  bool initializing = true;
   String? error;
+  UserAccount? currentUser;
+
+  bool get isAuthenticated => currentUser != null;
 
   Future<void> initialize() async {
-    final prefs = await SharedPreferences.getInstance();
-    favorites = (prefs.getStringList('favorites') ?? []).toSet();
-    final saved = prefs.getString('portfolio');
-    if (saved != null) {
-      portfolio = (jsonDecode(saved) as List<dynamic>)
-          .whereType<Map<String, dynamic>>()
-          .map(PortfolioItem.fromJson)
-          .toList();
+    try {
+      currentUser = await database.restoreSession();
+      if (currentUser != null) {
+        await _loadUserData();
+        await refresh();
+      }
+    } finally {
+      initializing = false;
+      notifyListeners();
     }
+  }
+
+  Future<void> register({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    currentUser = await database.register(
+      name: name,
+      email: email,
+      password: password,
+    );
+    await _loadUserData();
     await refresh();
+  }
+
+  Future<void> login(String email, String password) async {
+    currentUser = await database.login(email, password);
+    await _loadUserData();
+    await refresh();
+  }
+
+  Future<void> logout() async {
+    await database.logout();
+    currentUser = null;
+    favorites = {};
+    portfolio = [];
+    stocks = [];
+    error = null;
+    notifyListeners();
+  }
+
+  Future<void> _loadUserData() async {
+    final userId = currentUser!.id;
+    favorites = await database.favoritesFor(userId);
+    portfolio = await database.positionsFor(userId);
   }
 
   Future<void> refresh() async {
@@ -61,15 +101,20 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> toggleFavorite(String symbol) async {
+    if (currentUser == null) return;
     favorites.contains(symbol) ? favorites.remove(symbol) : favorites.add(symbol);
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('favorites', favorites.toList());
+    await database.setFavorite(
+      currentUser!.id,
+      symbol,
+      favorites.contains(symbol),
+    );
   }
 
   Future<void> savePosition(PortfolioItem item) async {
+    if (currentUser == null) return;
     portfolio = [...portfolio.where((e) => e.symbol != item.symbol), item];
-    await _savePortfolio();
+    await database.savePosition(currentUser!.id, item);
     notifyListeners();
     if (!stocks.any((stock) => stock.symbol == item.symbol)) await refresh();
   }
@@ -102,8 +147,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> removePosition(String symbol) async {
+    if (currentUser == null) return;
     portfolio = portfolio.where((e) => e.symbol != symbol).toList();
-    await _savePortfolio();
+    await database.removePosition(currentUser!.id, symbol);
     notifyListeners();
   }
 
@@ -114,8 +160,4 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _savePortfolio() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('portfolio', jsonEncode(portfolio.map((e) => e.toJson()).toList()));
-  }
 }

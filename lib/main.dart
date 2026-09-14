@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'database/app_database.dart';
 import 'screens/app_shell.dart';
+import 'screens/auth_screen.dart';
 import 'services/brapi_service.dart';
 import 'state/app_state.dart';
 import 'theme.dart';
@@ -23,7 +25,7 @@ class _BolsaFacilAppState extends State<BolsaFacilApp> {
   @override
   void initState() {
     super.initState();
-    state = AppState(BrapiService());
+    state = AppState(BrapiService(), AppDatabase());
     state.initialize();
   }
 
@@ -32,6 +34,18 @@ class _BolsaFacilAppState extends State<BolsaFacilApp> {
         title: 'Bolsa Fácil',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
-        home: AppShell(state: state),
+        home: AnimatedBuilder(
+          animation: state,
+          builder: (context, _) {
+            if (state.initializing) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            return state.isAuthenticated
+                ? AppShell(state: state)
+                : AuthScreen(state: state);
+          },
+        ),
       );
 }
