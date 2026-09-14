@@ -29,36 +29,51 @@ class BrapiService {
     bool historical = false,
   }) async {
     if (symbols.isEmpty) return [];
-    final joined = symbols.map((e) => e.toUpperCase()).join(',');
+    // O plano gratuito da brapi aceita somente um ticker por requisição.
+    // Consultas individuais também evitam perder toda a lista caso um ativo
+    // específico esteja indisponível.
+    final requests = symbols
+        .map((symbol) => _getSingleQuote(symbol, historical: historical))
+        .toList();
+    final results = await Future.wait(requests);
+    final stocks = results.whereType<Stock>().toList();
+    if (stocks.isEmpty) {
+      throw const BrapiException(
+        'Não foi possível carregar as cotações. Confira seu token da brapi.',
+      );
+    }
+    return stocks;
+  }
+
+  Future<Stock?> _getSingleQuote(
+    String symbol, {
+    required bool historical,
+  }) async {
+    final normalized = symbol.trim().toUpperCase();
     final query = <String, String>{
       if (historical) 'range': '3mo',
       if (historical) 'interval': '1d',
       if (_token.isNotEmpty) 'token': _token,
     };
-    final uri = Uri.parse('$_baseUrl/quote/$joined').replace(queryParameters: query);
+    final uri = Uri.parse(
+      '$_baseUrl/quote/$normalized',
+    ).replace(queryParameters: query);
     final response = await _client.get(uri, headers: _headers);
     if (response.statusCode != 200) {
-      throw BrapiException(_messageFor(response.statusCode));
+      return null;
     }
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return (data['results'] as List<dynamic>? ?? [])
+    final stocks = (data['results'] as List<dynamic>? ?? [])
         .whereType<Map<String, dynamic>>()
         .map(Stock.fromJson)
         .toList();
+    return stocks.isEmpty ? null : stocks.first;
   }
 
   Future<Stock> getQuote(String symbol) async {
-    final stocks = await getQuotes([symbol], historical: true);
-    if (stocks.isEmpty) throw const BrapiException('Ação não encontrada.');
-    return stocks.first;
+    final stock = await _getSingleQuote(symbol, historical: true);
+    if (stock == null) throw const BrapiException('Ação não encontrada.');
+    return stock;
   }
 
-  String _messageFor(int code) {
-    if (code == 401 || code == 403) {
-      return 'A API solicitou um token válido. Configure BRAPI_TOKEN.';
-    }
-    if (code == 404) return 'Ação não encontrada.';
-    if (code == 429) return 'Limite de consultas atingido. Tente novamente em instantes.';
-    return 'Não foi possível consultar a bolsa (erro $code).';
-  }
 }
