@@ -22,7 +22,7 @@ class BrapiService {
   String get _baseUrl => _configuredBaseUrl.isNotEmpty
       ? _configuredBaseUrl
       : kIsWeb
-          ? 'http://localhost:8080/api'
+          ? 'http://localhost:8081/api'
           : 'https://brapi.dev/api';
 
   // Tokens nunca devem ser enviados no bundle Web. No navegador, o proxy

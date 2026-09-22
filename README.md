@@ -46,7 +46,7 @@ flutter run -d chrome
 O arquivo `.env` está no `.gitignore` e não deve ser enviado ao repositório. O
 `.env.example` documenta a variável necessária sem guardar a credencial real.
 
-O Flutter Web usa `http://localhost:8080/api` por padrão. Em produção, publique
+O Flutter Web usa `http://localhost:8081/api` por padrão. Em produção, publique
 o proxy em um servidor e informe seu endereço com
 `--dart-define=BRAPI_BASE_URL=https://seu-servidor.com/api`.
 

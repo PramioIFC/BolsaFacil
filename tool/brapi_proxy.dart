@@ -9,8 +9,8 @@ Future<void> main() async {
     return;
   }
 
-  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8080);
-  stdout.writeln('Proxy da brapi ativo em http://localhost:8080');
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8081);
+  stdout.writeln('Proxy da brapi ativo em http://localhost:8081');
   await for (final request in server) {
     await _handle(request, token);
   }
