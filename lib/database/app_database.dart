@@ -2,43 +2,106 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
 
 import '../models/portfolio_item.dart';
+import '../models/stock.dart';
+import '../models/trade.dart';
 import '../models/user_account.dart';
 
+/// Erro de autenticação/cadastro com mensagem pronta para exibir ao usuário.
 class AuthException implements Exception {
   const AuthException(this.message);
   final String message;
+
   @override
   String toString() => message;
 }
 
+/// Erro ao importar um backup de dados.
+class DataImportException implements Exception {
+  const DataImportException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// Acesso ao SQLite local: contas, sessão, favoritos, operações, posições e
+/// cache de cotações.
+///
+/// A fábrica (`DatabaseFactory`) e o nome do arquivo são injetáveis para
+/// permitir testes com banco em memória. Quando [factory] é `null`, usa-se o
+/// `databaseFactory` global configurado por `initDatabaseFactory()`.
 class AppDatabase {
-  static final AppDatabase instance = AppDatabase._init();
-  AppDatabase._init();
+  AppDatabase({
+    DatabaseFactory? factory,
+    String databaseName = 'bolsa_facil.db',
+    int? pbkdf2Iterations,
+  })  : _factory = factory,
+        _databaseName = databaseName,
+        _iterations = pbkdf2Iterations ?? defaultPbkdf2Iterations;
 
-  Database? _database;
+  /// Instância usada pelo aplicativo.
+  static final AppDatabase instance = AppDatabase();
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDB('bolsa_facil.db');
-    return _database!;
+  static const schemaVersion = 2;
+
+  /// Iterações do PBKDF2-HMAC-SHA256. Valor de compromisso: o cálculo roda em
+  /// Dart puro. Na Web (JavaScript) é bem mais lento, então usa-se menos. O
+  /// cálculo cede o controle à UI a cada 1000 iterações para não congelar a
+  /// tela. Para endurecer, aumente o valor ou migre para Argon2id.
+  static int get defaultPbkdf2Iterations => kIsWeb ? 20000 : 60000;
+
+  static const _hashPrefix = 'pbkdf2_sha256';
+  static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+  final DatabaseFactory? _factory;
+  final String _databaseName;
+  final int _iterations;
+  Future<Database>? _opening;
+
+  Future<Database> get database => _opening ??= _open();
+
+  Future<void> close() async {
+    final opening = _opening;
+    _opening = null;
+    if (opening != null) await (await opening).close();
   }
 
-  Future<Database> _initDB(String filePath) async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, filePath);
-    return await openDatabase(
+  // ---------------------------------------------------------------------------
+  // Abertura e schema
+  // ---------------------------------------------------------------------------
+
+  Future<Database> _open() async {
+    final factory = _factory ?? databaseFactory;
+    final inMemory = _databaseName == inMemoryDatabasePath;
+    final path = inMemory || p.isAbsolute(_databaseName)
+        ? _databaseName
+        : p.join(await factory.getDatabasesPath(), _databaseName);
+    return factory.openDatabase(
       path,
-      version: 1,
-      onCreate: _createDB,
-      onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
+      options: OpenDatabaseOptions(
+        version: schemaVersion,
+        singleInstance: !inMemory,
+        onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
+        onCreate: (db, version) async {
+          await _createV1(db);
+          await _createV2(db);
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await _createV2(db);
+            await _seedTransactionsFromPositions(db);
+          }
+        },
+      ),
     );
   }
 
-  Future<void> _createDB(Database db, int version) async {
+  Future<void> _createV1(Database db) async {
     await db.execute('''
       CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,71 +140,216 @@ class AppDatabase {
     ''');
   }
 
+  Future<void> _createV2(Database db) async {
+    await db.execute('''
+      CREATE TABLE transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('buy', 'sell', 'adjust')),
+        quantity REAL NOT NULL CHECK (quantity > 0),
+        price REAL NOT NULL CHECK (price >= 0),
+        fees REAL NOT NULL DEFAULT 0,
+        executed_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_transactions_user_symbol
+      ON transactions (user_id, symbol, executed_at)
+    ''');
+    await db.execute('''
+      CREATE TABLE quotes_cache (
+        symbol TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL
+      )
+    ''');
+  }
+
+  /// Bancos criados na versão 1 só têm o estado consolidado em `positions`.
+  /// Cada posição vira um ajuste inicial, preservando quantidade e PM.
+  Future<void> _seedTransactionsFromPositions(Database db) async {
+    await db.execute('''
+      INSERT INTO transactions
+        (user_id, symbol, type, quantity, price, fees, executed_at)
+      SELECT user_id, symbol, 'adjust', quantity, average_price, 0, purchased_at
+      FROM positions
+      WHERE quantity > 0
+    ''');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Senhas (PBKDF2-HMAC-SHA256)
+  // ---------------------------------------------------------------------------
+
   String _createSalt() {
     final random = Random.secure();
     return base64UrlEncode(List.generate(24, (_) => random.nextInt(256)));
   }
 
-  String _hashPassword(String password, String salt) =>
-      sha256.convert(utf8.encode('$salt:$password')).toString();
-
-  Future<void> _saveSession(Database db, int userId) async {
-    await db.insert(
-      'sessions',
-      {'id': 1, 'user_id': userId},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+  Future<List<int>> _pbkdf2(List<int> password, List<int> salt, int iterations) async {
+    final hmac = Hmac(sha256, password);
+    var block = hmac.convert([...salt, 0, 0, 0, 1]).bytes;
+    final result = List<int>.from(block);
+    for (var i = 1; i < iterations; i++) {
+      block = hmac.convert(block).bytes;
+      for (var j = 0; j < result.length; j++) {
+        result[j] ^= block[j];
+      }
+      // Devolve o controle ao loop de eventos para a UI continuar animando.
+      if (i % 1000 == 0) await Future<void>.delayed(Duration.zero);
+    }
+    return result;
   }
 
-  Future<UserAccount?> getSession() async {
-    final db = await database;
-    final rows = await db.query('sessions', where: 'id = 1', limit: 1);
-    if (rows.isEmpty) return null;
-    final userId = rows.first['user_id'] as int;
-    final userRows = await db.query('users', where: 'id = ?', whereArgs: [userId], limit: 1);
-    if (userRows.isEmpty) return null;
-    return UserAccount.fromMap(userRows.first);
+  String _hex(List<int> bytes) =>
+      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+
+  /// Formato armazenado: `pbkdf2_sha256$<iterações>$<hash em hex>`.
+  Future<String> _hashPassword(String password, String salt) async {
+    final key = await _pbkdf2(utf8.encode(password), utf8.encode(salt), _iterations);
+    return '$_hashPrefix\$$_iterations\$${_hex(key)}';
   }
+
+  bool _constantTimeEquals(String a, String b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    }
+    return diff == 0;
+  }
+
+  /// Aceita o formato atual e o legado (`SHA-256("$salt:$senha")` em hex).
+  /// `needsUpgrade` indica que o hash deve ser regravado no formato atual.
+  Future<({bool ok, bool needsUpgrade})> _verifyPassword(
+    String password,
+    String salt,
+    String stored,
+  ) async {
+    if (stored.startsWith('$_hashPrefix\$')) {
+      final parts = stored.split('\$');
+      final iterations = parts.length == 3 ? int.tryParse(parts[1]) : null;
+      if (iterations == null || iterations <= 0) {
+        return (ok: false, needsUpgrade: false);
+      }
+      final candidate = _hex(
+        await _pbkdf2(utf8.encode(password), utf8.encode(salt), iterations),
+      );
+      return (
+        ok: _constantTimeEquals(candidate, parts[2]),
+        needsUpgrade: iterations != _iterations,
+      );
+    }
+    final legacy = sha256.convert(utf8.encode('$salt:$password')).toString();
+    return (ok: _constantTimeEquals(legacy, stored), needsUpgrade: true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Autenticação e sessão
+  // ---------------------------------------------------------------------------
 
   Future<UserAccount> register({
     required String name,
     required String email,
     required String password,
   }) async {
-    final db = await database;
+    final cleanName = name.trim();
     final normalizedEmail = email.trim().toLowerCase();
-    final salt = _createSalt();
-    final hash = _hashPassword(password, salt);
-    final existing = await db.query('users', where: 'email = ?', whereArgs: [normalizedEmail], limit: 1);
-    int id;
-    if (existing.isNotEmpty) {
-      id = existing.first['id'] as int;
-      await db.update('users', {'name': name.trim(), 'password_hash': hash, 'password_salt': salt}, where: 'id = ?', whereArgs: [id]);
-    } else {
-      id = await db.insert('users', {
-        'name': name.trim(),
-        'email': normalizedEmail,
-        'password_hash': hash,
-        'password_salt': salt,
-        'created_at': DateTime.now().toIso8601String(),
-      });
+    if (cleanName.length < 2) throw const AuthException('Informe seu nome.');
+    if (!_emailPattern.hasMatch(normalizedEmail)) {
+      throw const AuthException('Informe um e-mail válido.');
     }
-    await _saveSession(db, id);
-    return UserAccount(id: id, name: name.trim(), email: normalizedEmail);
+    if (password.length < 6) {
+      throw const AuthException('Use pelo menos 6 caracteres na senha.');
+    }
+
+    final db = await database;
+    final existing = await db.query(
+      'users',
+      columns: ['id'],
+      where: 'email = ?',
+      whereArgs: [normalizedEmail],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      throw const AuthException('Este e-mail já está cadastrado.');
+    }
+
+    final salt = _createSalt();
+    try {
+      final id = await db.insert('users', {
+        'name': cleanName,
+        'email': normalizedEmail,
+        'password_hash': await _hashPassword(password, salt),
+        'password_salt': salt,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      await _saveSession(db, id);
+      return UserAccount(id: id, name: cleanName, email: normalizedEmail);
+    } on DatabaseException catch (error) {
+      if (error.isUniqueConstraintError()) {
+        throw const AuthException('Este e-mail já está cadastrado.');
+      }
+      rethrow;
+    }
   }
 
   Future<UserAccount> login(String email, String password) async {
+    const invalid = AuthException('E-mail ou senha incorretos.');
     final db = await database;
-    final rows = await db.query('users', where: 'email = ?', whereArgs: [email.trim().toLowerCase()], limit: 1);
-    if (rows.isEmpty) throw const AuthException('E-mail ou senha incorretos.');
+    final rows = await db.query(
+      'users',
+      where: 'email = ?',
+      whereArgs: [email.trim().toLowerCase()],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      // Gasta o mesmo tempo de uma verificação real (evita revelar, pelo
+      // tempo de resposta, se o e-mail existe).
+      await _hashPassword(password, 'usuario-inexistente');
+      throw invalid;
+    }
     final row = rows.first;
-    final salt = row['password_salt'] as String;
-    if (_hashPassword(password, salt) != row['password_hash']) {
-      throw const AuthException('E-mail ou senha incorretos.');
+    final check = await _verifyPassword(
+      password,
+      row['password_salt'] as String,
+      row['password_hash'] as String,
+    );
+    if (!check.ok) throw invalid;
+
+    if (check.needsUpgrade) {
+      await db.update(
+        'users',
+        {'password_hash': await _hashPassword(password, row['password_salt'] as String)},
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
     }
     final user = UserAccount.fromMap(row);
     await _saveSession(db, user.id);
     return user;
+  }
+
+  Future<void> _saveSession(Database db, int userId) => db.insert(
+        'sessions',
+        {'id': 1, 'user_id': userId},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+  Future<UserAccount?> getSession() async {
+    final db = await database;
+    final sessions = await db.query('sessions', where: 'id = 1', limit: 1);
+    if (sessions.isEmpty) return null;
+    final users = await db.query(
+      'users',
+      where: 'id = ?',
+      whereArgs: [sessions.first['user_id']],
+      limit: 1,
+    );
+    if (users.isEmpty) return null;
+    return UserAccount.fromMap(users.first);
   }
 
   Future<void> logout() async {
@@ -149,44 +357,293 @@ class AppDatabase {
     await db.delete('sessions');
   }
 
+  // ---------------------------------------------------------------------------
+  // Favoritos
+  // ---------------------------------------------------------------------------
+
   Future<Set<String>> getFavorites(int userId) async {
     final db = await database;
-    final rows = await db.query('favorites', columns: ['symbol'], where: 'user_id = ?', whereArgs: [userId]);
-    return rows.map((r) => r['symbol'] as String).toSet();
+    final rows = await db.query(
+      'favorites',
+      columns: ['symbol'],
+      where: 'user_id = ?',
+      whereArgs: [userId],
+    );
+    return rows.map((row) => row['symbol'] as String).toSet();
   }
 
   Future<void> toggleFavorite(int userId, String symbol, bool isFavorite) async {
     final db = await database;
     if (isFavorite) {
-      await db.insert('favorites', {'user_id': userId, 'symbol': symbol}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await db.insert(
+        'favorites',
+        {'user_id': userId, 'symbol': symbol},
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
     } else {
-      await db.delete('favorites', where: 'user_id = ? AND symbol = ?', whereArgs: [userId, symbol]);
+      await db.delete(
+        'favorites',
+        where: 'user_id = ? AND symbol = ?',
+        whereArgs: [userId, symbol],
+      );
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Carteira: posições derivadas das operações
+  // ---------------------------------------------------------------------------
+
   Future<List<PortfolioItem>> getPositions(int userId) async {
     final db = await database;
-    final rows = await db.query('positions', where: 'user_id = ?', whereArgs: [userId], orderBy: 'purchased_at DESC');
-    return rows.map((r) => PortfolioItem(
-          symbol: r['symbol'] as String,
-          quantity: (r['quantity'] as num).toDouble(),
-          averagePrice: (r['average_price'] as num).toDouble(),
-        )).toList();
+    final rows = await db.query(
+      'positions',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'purchased_at DESC',
+    );
+    return rows
+        .map((row) => PortfolioItem(
+              symbol: row['symbol'] as String,
+              quantity: (row['quantity'] as num).toDouble(),
+              averagePrice: (row['average_price'] as num).toDouble(),
+            ))
+        .toList();
   }
 
-  Future<void> savePosition(int userId, PortfolioItem item) async {
+  /// Registra uma operação e recalcula a posição do ativo, de forma atômica.
+  /// Lança [TradeException] (e não grava nada) se os dados forem inválidos ou
+  /// se uma venda exceder a posição.
+  Future<void> recordTrade(int userId, Trade trade) async {
+    final symbol = trade.symbol.trim().toUpperCase();
+    if (symbol.isEmpty) throw const TradeException('Informe o código da ação.');
+    if (!trade.quantity.isFinite || trade.quantity <= 0) {
+      throw const TradeException('A quantidade deve ser maior que zero.');
+    }
+    if (!trade.price.isFinite || trade.price < 0) {
+      throw const TradeException('Informe um preço válido.');
+    }
+    if (!trade.fees.isFinite || trade.fees < 0) {
+      throw const TradeException('Informe taxas válidas.');
+    }
     final db = await database;
-    await db.insert('positions', {
-      'user_id': userId,
-      'symbol': item.symbol,
-      'quantity': item.quantity,
-      'average_price': item.averagePrice,
-      'purchased_at': DateTime.now().toIso8601String(),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.transaction((txn) async {
+      await txn.insert(
+        'transactions',
+        Trade(
+          symbol: symbol,
+          type: trade.type,
+          quantity: trade.quantity,
+          price: trade.price,
+          fees: trade.fees,
+          executedAt: trade.executedAt,
+        ).toMap(userId),
+      );
+      await _rebuildPosition(txn, userId, symbol);
+    });
   }
 
+  /// Substitui quantidade e preço médio (edição manual) via operação `adjust`.
+  Future<void> adjustPosition(int userId, PortfolioItem item) => recordTrade(
+        userId,
+        Trade(
+          symbol: item.symbol,
+          type: TradeType.adjust,
+          quantity: item.quantity,
+          price: item.averagePrice,
+          executedAt: DateTime.now(),
+        ),
+      );
+
+  /// Apaga a posição **e o histórico de operações** do ativo.
   Future<void> removePosition(int userId, String symbol) async {
     final db = await database;
-    await db.delete('positions', where: 'user_id = ? AND symbol = ?', whereArgs: [userId, symbol]);
+    await db.transaction((txn) async {
+      await txn.delete(
+        'transactions',
+        where: 'user_id = ? AND symbol = ?',
+        whereArgs: [userId, symbol],
+      );
+      await txn.delete(
+        'positions',
+        where: 'user_id = ? AND symbol = ?',
+        whereArgs: [userId, symbol],
+      );
+    });
+  }
+
+  Future<List<Trade>> getTrades(int userId, {String? symbol}) async {
+    final db = await database;
+    final rows = await db.query(
+      'transactions',
+      where: symbol == null ? 'user_id = ?' : 'user_id = ? AND symbol = ?',
+      whereArgs: symbol == null ? [userId] : [userId, symbol],
+      orderBy: 'executed_at DESC, id DESC',
+    );
+    return rows.map(Trade.fromMap).toList();
+  }
+
+  /// Lucro/prejuízo realizado (vendas) somado entre todos os ativos.
+  Future<double> getRealizedProfit(int userId) async {
+    final db = await database;
+    final rows = await db.query(
+      'transactions',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'executed_at ASC, id ASC',
+    );
+    final bySymbol = <String, List<Trade>>{};
+    for (final row in rows) {
+      final trade = Trade.fromMap(row);
+      bySymbol.putIfAbsent(trade.symbol, () => []).add(trade);
+    }
+    var total = 0.0;
+    for (final trades in bySymbol.values) {
+      total += summarizeTrades(trades).realizedProfit;
+    }
+    return total;
+  }
+
+  Future<void> _rebuildPosition(
+    DatabaseExecutor txn,
+    int userId,
+    String symbol,
+  ) async {
+    final rows = await txn.query(
+      'transactions',
+      where: 'user_id = ? AND symbol = ?',
+      whereArgs: [userId, symbol],
+      orderBy: 'executed_at ASC, id ASC',
+    );
+    final summary = summarizeTrades(rows.map(Trade.fromMap));
+    if (summary.quantity > 0) {
+      await txn.insert(
+        'positions',
+        {
+          'user_id': userId,
+          'symbol': symbol,
+          'quantity': summary.quantity,
+          'average_price': summary.averagePrice,
+          'purchased_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      await txn.delete(
+        'positions',
+        where: 'user_id = ? AND symbol = ?',
+        whereArgs: [userId, symbol],
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Backup (exportar/importar)
+  // ---------------------------------------------------------------------------
+
+  /// Dados do usuário em formato portável. Nunca inclui senha nem hash.
+  Future<Map<String, dynamic>> exportUserData(int userId) async {
+    final favorites = (await getFavorites(userId)).toList()..sort();
+    final db = await database;
+    final rows = await db.query(
+      'transactions',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'executed_at ASC, id ASC',
+    );
+    return {
+      'app': 'bolsa_facil',
+      'version': 1,
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'favorites': favorites,
+      'transactions': rows.map((row) => Trade.fromMap(row).toJson()).toList(),
+    };
+  }
+
+  /// Substitui favoritos, operações e posições do usuário pelo conteúdo do
+  /// backup. Tudo ou nada: em caso de erro nada é alterado.
+  Future<void> importUserData(int userId, Map<String, dynamic> data) async {
+    if (data['app'] != 'bolsa_facil') {
+      throw const DataImportException('Arquivo não reconhecido como backup do Bolsa Fácil.');
+    }
+    final favorites = <String>{};
+    final trades = <Trade>[];
+    try {
+      for (final item in (data['favorites'] as List? ?? const [])) {
+        final symbol = (item as String).trim().toUpperCase();
+        if (symbol.isNotEmpty) favorites.add(symbol);
+      }
+      for (final item in (data['transactions'] as List? ?? const [])) {
+        trades.add(Trade.fromJson(item as Map<String, dynamic>));
+      }
+    } catch (_) {
+      throw const DataImportException('O backup contém dados inválidos.');
+    }
+
+    final db = await database;
+    try {
+      await db.transaction((txn) async {
+        for (final table in const ['favorites', 'positions', 'transactions']) {
+          await txn.delete(table, where: 'user_id = ?', whereArgs: [userId]);
+        }
+        for (final symbol in favorites) {
+          await txn.insert('favorites', {'user_id': userId, 'symbol': symbol});
+        }
+        for (final trade in trades) {
+          await txn.insert('transactions', trade.toMap(userId));
+        }
+        for (final symbol in trades.map((t) => t.symbol).toSet()) {
+          await _rebuildPosition(txn, userId, symbol);
+        }
+      });
+    } on TradeException catch (error) {
+      throw DataImportException('Backup inconsistente: ${error.message}');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cache de cotações
+  // ---------------------------------------------------------------------------
+
+  Future<Map<String, CachedQuote>> getCachedQuotes(Iterable<String> symbols) async {
+    final list = symbols.toSet().toList();
+    if (list.isEmpty) return {};
+    final db = await database;
+    final placeholders = List.filled(list.length, '?').join(',');
+    final rows = await db.query(
+      'quotes_cache',
+      where: 'symbol IN ($placeholders)',
+      whereArgs: list,
+    );
+    final result = <String, CachedQuote>{};
+    for (final row in rows) {
+      try {
+        final map = jsonDecode(row['payload'] as String) as Map<String, dynamic>;
+        result[row['symbol'] as String] = CachedQuote(
+          stock: Stock.fromCacheMap(map),
+          fetchedAt: DateTime.fromMillisecondsSinceEpoch(row['fetched_at'] as int),
+        );
+      } catch (_) {
+        // Linha corrompida: ignora e deixa a próxima consulta regravar.
+      }
+    }
+    return result;
+  }
+
+  Future<void> putCachedQuotes(Map<String, Stock> quotes, DateTime fetchedAt) async {
+    if (quotes.isEmpty) return;
+    final db = await database;
+    final batch = db.batch();
+    quotes.forEach((symbol, stock) {
+      batch.insert(
+        'quotes_cache',
+        {
+          'symbol': symbol,
+          'payload': jsonEncode(stock.toCacheMap()),
+          'fetched_at': fetchedAt.millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+    await batch.commit(noResult: true);
   }
 }

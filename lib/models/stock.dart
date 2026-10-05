@@ -34,6 +34,27 @@ class Stock {
   
   final List<PricePoint> history;
 
+  /// Campos básicos persistidos no cache (sem histórico nem fundamentos).
+  Map<String, Object?> toCacheMap() => {
+        'symbol': symbol,
+        'name': name,
+        'price': price,
+        'changePercent': changePercent,
+        'logoUrl': logoUrl,
+        'currency': currency,
+        'marketCap': marketCap,
+      };
+
+  factory Stock.fromCacheMap(Map<String, dynamic> map) => Stock(
+        symbol: map['symbol']?.toString() ?? '',
+        name: map['name']?.toString() ?? '',
+        price: (map['price'] as num?)?.toDouble() ?? 0,
+        changePercent: (map['changePercent'] as num?)?.toDouble() ?? 0,
+        logoUrl: map['logoUrl']?.toString(),
+        currency: map['currency']?.toString() ?? 'BRL',
+        marketCap: (map['marketCap'] as num?)?.toDouble(),
+      );
+
   factory Stock.fromJson(Map<String, dynamic> json) {
     final historical = (json['historicalDataPrice'] as List<dynamic>? ?? [])
         .whereType<Map<String, dynamic>>()
@@ -62,6 +83,24 @@ class Stock {
       history: historical,
     );
   }
+}
+
+
+/// Sugestão de ticker retornada pela busca (autocomplete).
+class TickerSuggestion {
+  const TickerSuggestion({required this.symbol, required this.name, this.logoUrl});
+
+  final String symbol;
+  final String name;
+  final String? logoUrl;
+}
+
+/// Cotação básica guardada no cache local (SQLite) com o instante da consulta.
+class CachedQuote {
+  const CachedQuote({required this.stock, required this.fetchedAt});
+
+  final Stock stock;
+  final DateTime fetchedAt;
 }
 
 class PricePoint {

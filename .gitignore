@@ -17,3 +17,4 @@ windows/flutter/ephemeral/
 .tool-data/
 .chrome-data/
 .data/
+config/dart_defines.json
