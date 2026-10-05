@@ -7,6 +7,12 @@ class Stock {
     this.logoUrl,
     this.currency = 'BRL',
     this.marketCap,
+    this.dividendYield,
+    this.trailingPE,
+    this.priceToBook,
+    this.profitMargins,
+    this.totalDebt,
+    this.totalCash,
     this.history = const [],
   });
 
@@ -17,6 +23,15 @@ class Stock {
   final String? logoUrl;
   final String currency;
   final double? marketCap;
+  
+  // Fundamentals & Dividends
+  final double? dividendYield;
+  final double? trailingPE;
+  final double? priceToBook;
+  final double? profitMargins;
+  final double? totalDebt;
+  final double? totalCash;
+  
   final List<PricePoint> history;
 
   factory Stock.fromJson(Map<String, dynamic> json) {
@@ -25,6 +40,10 @@ class Stock {
         .map(PricePoint.fromJson)
         .where((point) => point.close > 0)
         .toList();
+        
+    final stats = json['defaultKeyStatistics'] as Map<String, dynamic>?;
+    final financial = json['financialData'] as Map<String, dynamic>?;
+
     return Stock(
       symbol: json['symbol']?.toString() ?? '',
       name: json['longName']?.toString() ?? json['shortName']?.toString() ?? '',
@@ -34,6 +53,12 @@ class Stock {
       logoUrl: json['logourl']?.toString(),
       currency: json['currency']?.toString() ?? 'BRL',
       marketCap: (json['marketCap'] as num?)?.toDouble(),
+      dividendYield: (stats?['dividendYield'] as num?)?.toDouble(),
+      trailingPE: (stats?['trailingPE'] as num?)?.toDouble(),
+      priceToBook: (stats?['priceToBook'] as num?)?.toDouble(),
+      profitMargins: (stats?['profitMargins'] as num?)?.toDouble() ?? (financial?['profitMargins'] as num?)?.toDouble(),
+      totalDebt: (financial?['totalDebt'] as num?)?.toDouble(),
+      totalCash: (financial?['totalCash'] as num?)?.toDouble(),
       history: historical,
     );
   }

@@ -2,6 +2,10 @@ $ErrorActionPreference = 'Stop'
 $projectDirectory = $PSScriptRoot
 $proxy = $null
 
+# Limpa processos órfãos de sessões anteriores que fecharam com Ctrl+C
+Write-Host 'Limpando processos antigos...'
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'tool/brapi_proxy.dart' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 try {
     Write-Host 'Iniciando proxy seguro da brapi em http://localhost:8080...'
     $proxy = Start-Process `
@@ -18,7 +22,8 @@ try {
 
     Write-Host 'Iniciando Bolsa Fácil no Chrome...'
     Set-Location -LiteralPath $projectDirectory
-    flutter run -d chrome
+    $chromeDataDir = Join-Path $projectDirectory '.chrome-data'
+    flutter run -d chrome --web-port 3000 --web-browser-flag="--user-data-dir=$chromeDataDir"
 }
 finally {
     if ($null -ne $proxy -and -not $proxy.HasExited) {

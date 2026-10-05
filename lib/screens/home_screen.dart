@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-
 import '../models/stock.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
