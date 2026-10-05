@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/stock.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
+import '../utils/format.dart';
 import '../widgets/stock_tile.dart';
 
 class StockDetailsScreen extends StatefulWidget {
@@ -43,7 +44,7 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
       error = null;
     });
     try {
-      final value = await widget.state.brapiService.getQuote(
+      final value = await widget.state.loadQuote(
         widget.initialStock.symbol,
         range: requestedRange,
       );
@@ -76,7 +77,7 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
           Padding(padding: const EdgeInsets.only(bottom: 6), child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(color: (up ? positive : negative).withValues(alpha: .1), borderRadius: BorderRadius.circular(10)),
-            child: Text('${up ? '+' : ''}${current.changePercent.toStringAsFixed(2)}%', style: TextStyle(color: up ? positive : negative, fontWeight: FontWeight.w800)),
+            child: Text(formatPercent(current.changePercent), style: TextStyle(color: up ? positive : negative, fontWeight: FontWeight.w800)),
           )),
         ]),
         const SizedBox(height: 26),
@@ -192,6 +193,14 @@ class _BuyCardState extends State<_BuyCard> {
             '${purchasedQuantity.toStringAsFixed(2)} ações de '
             '${widget.stock.symbol} adicionadas à carteira.',
           ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
           behavior: SnackBarBehavior.floating,
         ),
       );
