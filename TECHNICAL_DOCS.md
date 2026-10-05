@@ -10,7 +10,7 @@ Aplicativo Flutter para acompanhar ações da B3, favoritar ativos e simular uma
 | API externa | brapi.dev: `/api/quote/{ticker}` e `/api/quote/list` |
 | Gráficos | `fl_chart ^0.69.0` (linha no histórico, pizza na alocação) |
 
-> **Estado de verificação.** Esta versão foi escrita sem acesso a um SDK Dart/Flutter: o código passou apenas por verificação de sintaxe e conferência estática de imports. `flutter analyze`, `flutter test` e `flutter build web` ainda precisam ser executados (ver `docs/HANDOFF_CODEX.md`).
+> **Estado de verificação.** `flutter analyze` sem avisos e `flutter test` com 53 testes passando (executados pelo autor no Windows). **Ainda não verificados:** `flutter build web`, execução manual do app (Web, Android, Windows), autocomplete contra a API real e o comportamento do SQLite em Wasm no navegador (ver `docs/HANDOFF_CODEX.md`).
 
 ---
 
@@ -108,7 +108,7 @@ Cada linha de `positions` vira uma transação `adjust` (quantidade e PM preserv
 Autenticação **local**, sem servidor, OAuth ou JWT.
 
 - **Registro** (`AppDatabase.register`): valida nome (≥ 2), e-mail e senha (≥ 6). E-mail já cadastrado → `AuthException('Este e-mail já está cadastrado.')`; a conta existente **não** é alterada.
-- **Hash**: PBKDF2-HMAC-SHA256, 60.000 iterações, salt aleatório de 24 bytes. Formato: `pbkdf2_sha256$<iterações>$<hex>`. Hashes legados (`SHA-256("$salt:$senha")`) são aceitos e regravados no formato novo no primeiro login bem-sucedido. Comparação em tempo constante.
+- **Hash**: PBKDF2-HMAC-SHA256, salt aleatório de 24 bytes, 60.000 iterações (nativo) ou 20.000 (Web, onde o cálculo em JavaScript é bem mais lento). O cálculo cede o controle à UI a cada 1000 iterações, para a tela não congelar. Se o número de iterações salvo difere do da plataforma, o hash é regravado no próximo login. Formato: `pbkdf2_sha256$<iterações>$<hex>`. Hashes legados (`SHA-256("$salt:$senha")`) são aceitos e regravados no formato novo no primeiro login bem-sucedido. Comparação em tempo constante.
 - **Login**: mesma mensagem para e-mail inexistente e senha errada; no caso do e-mail inexistente ainda se calcula um hash para equalizar o tempo.
 - **Sessão**: `sessions(id=1)`. `AppState.initialize()` chama `getSession()` e reidrata o usuário. `logout()` apaga a linha e zera o estado.
 
@@ -130,7 +130,7 @@ initialize() → db.getSession() → usuário? → _loadUserData() → refresh(f
 | `fetchQuotes` | Até 3 requisições simultâneas; remove duplicatas; resultado por ticker (`QuotesBatch`) |
 | 429 | Até 2 repetições com backoff (500 ms, 1 s; respeita `Retry-After`, máx. 5 s). Se persistir, o lote é abortado e os restantes recebem `rateLimited` |
 | Falhas | `QuoteFailure`: `notFound`, `rateLimited`, `unauthorized`, `network`, `other`; cada uma com mensagem própria |
-| `getQuote` | Tenta com fundamentos; em `notFound`/`other` refaz sem fundamentos |
+| `getQuote` | Cadeia de tentativas: (1) histórico + fundamentos, (2) só histórico, (3) só cotação básica. Segue para a próxima em `notFound`/`other`/`unauthorized` (a brapi nega 401/403 dados fora do plano); para em 429 ou falha de rede. Sem histórico, a tela mostra "indisponível" |
 | `searchTickers` | Autocomplete; nunca lança (devolve lista vazia) |
 
 ### 4.2 Endpoints
@@ -186,8 +186,8 @@ Execução: `cp .env.example .env` (preencher), depois `dart run tool/brapi_prox
 | `failedSymbols`, `rateLimited`, `usingStaleData`, `updatedAt` | Qualidade da última atualização (banner e rótulo na Home) |
 | `actionError` | Erro de ação do usuário; o `AppShell` exibe em SnackBar e limpa (`takeActionError`) |
 
-- **`initialize()`**: resolve sessão, carrega favoritos/carteira/realizado e chama `refresh(force:false)`. Erros são capturados em `error`.
-- **`refresh({force = true})`**: busca `defaultSymbols ∪ favoritos ∪ carteira` via `QuoteRepository`. Chamadas simultâneas compartilham a mesma execução. Um contador `_epoch` descarta resultados que chegam depois de logout/novo login.
+- **`initialize()`**: resolve sessão e carrega favoritos/carteira/realizado; as cotações carregam **em segundo plano** (`unawaited(refresh(force:false))`), então o app abre sem esperar a rede. O mesmo vale para login e cadastro.
+- **`refresh({force = true})`**: busca `defaultSymbols ∪ favoritos ∪ carteira` via `QuoteRepository`. Chamadas simultâneas da mesma sessão compartilham a execução. `dispose()` marca o estado como descartado para que respostas tardias não notifiquem. Um contador `_epoch` descarta resultados que chegam depois de logout/novo login.
 - **`toggleFavorite`**: atualização otimista com **rollback** e `actionError` se a gravação falhar.
 - **`buy` / `sell` / `savePosition` / `removePosition`**: gravam no banco (transação atômica), recarregam `portfolio` e `realizedProfit`, notificam. Erros de regra (`TradeException`) sobem para a UI.
 - **`exportJson` / `importJson`**: backup em JSON (favoritos + operações; sem senha). Importar **substitui** os dados atuais, tudo ou nada.
@@ -218,7 +218,7 @@ Execução: `cp .env.example .env` (preencher), depois `dart run tool/brapi_prox
 | **Sem sincronização em nuvem** | App offline-first para dados do usuário; a rede é usada só para cotações |
 | **Dados presos ao armazenamento local** | Nativo: ao arquivo do app (desinstalar apaga). Web: ao IndexedDB **da origem** (domínio + porta) e do perfil do navegador; limpar dados do site ou trocar de porta/perfil perde tudo. Mitigação: exportar/importar backup |
 | Autenticação é local | Protege contas entre usuários do mesmo aparelho/navegador, não é segurança de servidor; quem acessa o arquivo do banco acessa os dados |
-| PBKDF2 em Dart puro | 60.000 iterações na thread da UI (compromisso). Aumentar ou migrar para implementação nativa (Argon2id) |
+| PBKDF2 em Dart puro | 60.000 (nativo) / 20.000 (Web) iterações, com cessão à UI a cada 1000. Aumentar ou migrar para implementação nativa (Argon2id) |
 | Sem rate limit de login | Tentativas ilimitadas no aparelho |
 | Cotações exigem rede | Há cache de 5 min, mas só dos campos básicos (sem histórico/fundamentos) |
 | Plano gratuito da brapi | 1 ticker por requisição e cotas limitadas |
@@ -243,4 +243,4 @@ Execução: `cp .env.example .env` (preencher), depois `dart run tool/brapi_prox
 | `test/app_state_test.dart` | Fluxos de registro, sessão, favoritos, compra/venda, backup |
 | `test/widget_test.dart` | `AuthScreen` |
 
-Os testes usam SQLite FFI em memória e `MockClient` (sem rede). **Ainda não foram executados.**
+Os testes usam SQLite FFI em memória e `MockClient` (sem rede). Estado atual: 53 testes passando.

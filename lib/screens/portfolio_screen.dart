@@ -372,7 +372,7 @@ class _Summary extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFF38344B),
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: primary.withOpacity(0.24), blurRadius: 24, offset: const Offset(0, 10))],
+        boxShadow: [BoxShadow(color: primary.withValues(alpha: 0.24), blurRadius: 24, offset: const Offset(0, 10))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('Valor atual', style: TextStyle(color: Colors.white70)),

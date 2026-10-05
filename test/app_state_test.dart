@@ -31,6 +31,8 @@ void main() {
   test('registrar carrega as cotações padrão e restaura a sessão depois', () async {
     await state.register(name: 'Ana', email: 'ana@a.com', password: '123456');
     expect(state.isAuthenticated, isTrue);
+    // As cotações carregam em segundo plano; refresh() junta-se à execução em curso.
+    await state.refresh(force: false);
     expect(state.stocks, hasLength(AppState.defaultSymbols.length));
     expect(state.updatedAt, isNotNull);
 
@@ -41,6 +43,7 @@ void main() {
     addTearDown(restored.dispose);
     await restored.initialize();
     expect(restored.currentUser?.email, 'ana@a.com');
+    await restored.refresh(force: false); // aguarda o carregamento em segundo plano
   });
 
   test('e-mail repetido no cadastro lança AuthException', () async {

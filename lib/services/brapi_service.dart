@@ -15,7 +15,7 @@ String brapiMessageFor(QuoteFailure failure) => switch (failure) {
       QuoteFailure.rateLimited =>
         'Limite de requisições da brapi atingido. Tente novamente em instantes.',
       QuoteFailure.unauthorized =>
-        'Token da brapi inválido ou ausente. Confira a configuração do BRAPI_TOKEN.',
+        'A brapi negou o acesso: token inválido ou plano sem acesso a este dado.',
       QuoteFailure.network => kIsWeb
           ? 'O proxy da brapi não está acessível. Execute .\\run_web.ps1 '
               'ou "dart run tool/brapi_proxy.dart".'
@@ -148,18 +148,31 @@ class BrapiService {
     return QuotesBatch(stocks: stocks, failures: failures);
   }
 
-  /// Cotação detalhada para a tela de detalhes. Tenta com fundamentos e, se a
-  /// brapi não os fornecer para o ticker, refaz só com os dados básicos.
+  /// Cotação detalhada para a tela de detalhes. Como alguns tickers não têm
+  /// fundamentos ou histórico no plano da brapi (a resposta pode ser 401/402/403),
+  /// tenta em ordem, do mais completo ao mais simples:
+  ///  1. histórico + fundamentos;
+  ///  2. só histórico;
+  ///  3. só a cotação básica (a tela mostra "histórico indisponível").
+  /// Para antes se a falha for de rede ou de limite de requisições (429).
   Future<Stock> getQuote(String symbol, {String range = '3mo'}) async {
-    var result = await fetchQuote(symbol, range: range, fundamentals: true);
-    final failure = result.failure;
-    if (failure == QuoteFailure.notFound || failure == QuoteFailure.other) {
-      result = await fetchQuote(symbol, range: range);
+    final attempts = <Future<QuoteFetchResult> Function()>[
+      () => fetchQuote(symbol, range: range, fundamentals: true),
+      () => fetchQuote(symbol, range: range),
+      () => fetchQuote(symbol),
+    ];
+    QuoteFailure? last;
+    for (final attempt in attempts) {
+      final result = await attempt();
+      final stock = result.stock;
+      if (stock != null) return stock;
+      last = result.failure!;
+      final retryable = last == QuoteFailure.notFound ||
+          last == QuoteFailure.other ||
+          last == QuoteFailure.unauthorized;
+      if (!retryable) break;
     }
-    final stock = result.stock;
-    if (stock != null) return stock;
-    final reason = result.failure!;
-    throw BrapiException(brapiMessageFor(reason), failure: reason);
+    throw BrapiException(brapiMessageFor(last!), failure: last);
   }
 
   /// Uma consulta a `GET /quote/{ticker}`, com repetição em caso de HTTP 429.

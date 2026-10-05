@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -64,7 +65,20 @@ class AppState extends ChangeNotifier {
   // Incrementado a cada login/logout para descartar respostas atrasadas.
   int _epoch = 0;
   Future<void>? _refreshing;
+  int _refreshingEpoch = -1;
+  bool _disposed = false;
   final Map<String, List<TickerSuggestion>> _suggestionCache = {};
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   String? takeActionError() {
     final message = actionError;
@@ -79,16 +93,15 @@ class AppState extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       currentUser = await db.getSession();
-      if (currentUser != null) {
-        await _loadUserData();
-        await refresh(force: false);
-      }
+      if (currentUser != null) await _loadUserData();
     } catch (e) {
       error = e.toString();
     } finally {
       initializing = false;
       notifyListeners();
     }
+    // As cotações carregam em segundo plano: o app abre sem esperar a rede.
+    if (currentUser != null) unawaited(refresh(force: false));
   }
 
   Future<void> register({
@@ -109,7 +122,9 @@ class AppState extends ChangeNotifier {
     _epoch++;
     currentUser = user;
     await _loadUserData();
-    await refresh(force: false);
+    notifyListeners();
+    // Não espera a rede: a Home mostra o carregamento enquanto as cotações chegam.
+    unawaited(refresh(force: false));
   }
 
   Future<void> logout() async {
@@ -144,8 +159,16 @@ class AppState extends ChangeNotifier {
   /// Atualiza as cotações de: destaques padrão + favoritos + carteira.
   /// Com [force] = `false` usa o cache local enquanto estiver dentro do TTL.
   /// Chamadas simultâneas compartilham a mesma execução.
-  Future<void> refresh({bool force = true}) =>
-      _refreshing ??= _doRefresh(force).whenComplete(() => _refreshing = null);
+  Future<void> refresh({bool force = true}) {
+    final running = _refreshing;
+    if (running != null && _refreshingEpoch == _epoch) return running;
+    _refreshingEpoch = _epoch;
+    final started = _doRefresh(force);
+    _refreshing = started;
+    return started.whenComplete(() {
+      if (identical(_refreshing, started)) _refreshing = null;
+    });
+  }
 
   Future<void> _doRefresh(bool force) async {
     final epoch = _epoch;

@@ -109,7 +109,7 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
           SizedBox(
             height: selectedRange == '1y' ? 340 : 270,
             child: current.history.isEmpty
-                ? _ChartLoading(error: error)
+                ? _ChartLoading(error: error, loading: chartLoading)
                 : _PriceChart(
                     stock: current,
                     range: selectedRange,
@@ -402,10 +402,24 @@ class _PriceChart extends StatelessWidget {
 }
 
 class _ChartLoading extends StatelessWidget {
-  const _ChartLoading({this.error});
+  const _ChartLoading({this.error, this.loading = false});
   final String? error;
+  final bool loading;
+
   @override
-  Widget build(BuildContext context) => Center(child: error == null ? const CircularProgressIndicator() : Text(error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.blueGrey)));
+  Widget build(BuildContext context) {
+    if (error != null) {
+      return Center(child: Text(error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.blueGrey)));
+    }
+    if (loading) return const Center(child: CircularProgressIndicator());
+    return const Center(
+      child: Text(
+        'Histórico indisponível para este ativo no seu plano da brapi.',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.blueGrey),
+      ),
+    );
+  }
 }
 
 class _Metric extends StatelessWidget {

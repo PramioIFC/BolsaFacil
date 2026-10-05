@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -38,10 +39,10 @@ class AppDatabase {
   AppDatabase({
     DatabaseFactory? factory,
     String databaseName = 'bolsa_facil.db',
-    int pbkdf2Iterations = defaultPbkdf2Iterations,
+    int? pbkdf2Iterations,
   })  : _factory = factory,
         _databaseName = databaseName,
-        _iterations = pbkdf2Iterations;
+        _iterations = pbkdf2Iterations ?? defaultPbkdf2Iterations;
 
   /// Instância usada pelo aplicativo.
   static final AppDatabase instance = AppDatabase();
@@ -49,9 +50,10 @@ class AppDatabase {
   static const schemaVersion = 2;
 
   /// Iterações do PBKDF2-HMAC-SHA256. Valor de compromisso: o cálculo roda em
-  /// Dart puro na thread da UI. Para endurecer, aumente o valor ou migre para
-  /// uma implementação nativa (ex.: Argon2id).
-  static const defaultPbkdf2Iterations = 60000;
+  /// Dart puro. Na Web (JavaScript) é bem mais lento, então usa-se menos. O
+  /// cálculo cede o controle à UI a cada 1000 iterações para não congelar a
+  /// tela. Para endurecer, aumente o valor ou migre para Argon2id.
+  static int get defaultPbkdf2Iterations => kIsWeb ? 20000 : 60000;
 
   static const _hashPrefix = 'pbkdf2_sha256';
   static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
@@ -186,7 +188,7 @@ class AppDatabase {
     return base64UrlEncode(List.generate(24, (_) => random.nextInt(256)));
   }
 
-  List<int> _pbkdf2(List<int> password, List<int> salt, int iterations) {
+  Future<List<int>> _pbkdf2(List<int> password, List<int> salt, int iterations) async {
     final hmac = Hmac(sha256, password);
     var block = hmac.convert([...salt, 0, 0, 0, 1]).bytes;
     final result = List<int>.from(block);
@@ -195,6 +197,8 @@ class AppDatabase {
       for (var j = 0; j < result.length; j++) {
         result[j] ^= block[j];
       }
+      // Devolve o controle ao loop de eventos para a UI continuar animando.
+      if (i % 1000 == 0) await Future<void>.delayed(Duration.zero);
     }
     return result;
   }
@@ -203,8 +207,8 @@ class AppDatabase {
       bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
   /// Formato armazenado: `pbkdf2_sha256$<iterações>$<hash em hex>`.
-  String _hashPassword(String password, String salt) {
-    final key = _pbkdf2(utf8.encode(password), utf8.encode(salt), _iterations);
+  Future<String> _hashPassword(String password, String salt) async {
+    final key = await _pbkdf2(utf8.encode(password), utf8.encode(salt), _iterations);
     return '$_hashPrefix\$$_iterations\$${_hex(key)}';
   }
 
@@ -219,11 +223,11 @@ class AppDatabase {
 
   /// Aceita o formato atual e o legado (`SHA-256("$salt:$senha")` em hex).
   /// `needsUpgrade` indica que o hash deve ser regravado no formato atual.
-  ({bool ok, bool needsUpgrade}) _verifyPassword(
+  Future<({bool ok, bool needsUpgrade})> _verifyPassword(
     String password,
     String salt,
     String stored,
-  ) {
+  ) async {
     if (stored.startsWith('$_hashPrefix\$')) {
       final parts = stored.split('\$');
       final iterations = parts.length == 3 ? int.tryParse(parts[1]) : null;
@@ -231,11 +235,11 @@ class AppDatabase {
         return (ok: false, needsUpgrade: false);
       }
       final candidate = _hex(
-        _pbkdf2(utf8.encode(password), utf8.encode(salt), iterations),
+        await _pbkdf2(utf8.encode(password), utf8.encode(salt), iterations),
       );
       return (
         ok: _constantTimeEquals(candidate, parts[2]),
-        needsUpgrade: iterations < _iterations,
+        needsUpgrade: iterations != _iterations,
       );
     }
     final legacy = sha256.convert(utf8.encode('$salt:$password')).toString();
@@ -278,7 +282,7 @@ class AppDatabase {
       final id = await db.insert('users', {
         'name': cleanName,
         'email': normalizedEmail,
-        'password_hash': _hashPassword(password, salt),
+        'password_hash': await _hashPassword(password, salt),
         'password_salt': salt,
         'created_at': DateTime.now().toUtc().toIso8601String(),
       });
@@ -304,11 +308,11 @@ class AppDatabase {
     if (rows.isEmpty) {
       // Gasta o mesmo tempo de uma verificação real (evita revelar, pelo
       // tempo de resposta, se o e-mail existe).
-      _hashPassword(password, 'usuario-inexistente');
+      await _hashPassword(password, 'usuario-inexistente');
       throw invalid;
     }
     final row = rows.first;
-    final check = _verifyPassword(
+    final check = await _verifyPassword(
       password,
       row['password_salt'] as String,
       row['password_hash'] as String,
@@ -318,7 +322,7 @@ class AppDatabase {
     if (check.needsUpgrade) {
       await db.update(
         'users',
-        {'password_hash': _hashPassword(password, row['password_salt'] as String)},
+        {'password_hash': await _hashPassword(password, row['password_salt'] as String)},
         where: 'id = ?',
         whereArgs: [row['id']],
       );

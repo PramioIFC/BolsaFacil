@@ -26,7 +26,7 @@ ThemeData buildTheme() {
     cardTheme: CardThemeData(
       color: Colors.white,
       elevation: 3,
-      shadowColor: Colors.black.withOpacity(0.15),
+      shadowColor: Colors.black.withValues(alpha: 0.15),
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),

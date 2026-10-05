@@ -119,4 +119,44 @@ void main() {
     expect(await broken.searchTickers('petr'), isEmpty);
     expect(await service.searchTickers('p'), isEmpty);
   });
+
+  test('getQuote: 401/403 nos fundamentos não impede de mostrar o ativo', () async {
+    final service = brapiWith((request) async => request.url.queryParameters.containsKey('modules')
+        ? http.Response('{}', 403)
+        : http.Response(quoteBody('WEGE3'), 200));
+    final stock = await service.getQuote('WEGE3');
+    expect(stock.symbol, 'WEGE3');
+  });
+
+  test('getQuote: sem histórico no plano, devolve a cotação básica', () async {
+    final urls = <Uri>[];
+    final service = brapiWith((request) async {
+      urls.add(request.url);
+      return request.url.queryParameters.containsKey('range')
+          ? http.Response('{}', 403)
+          : http.Response(quoteBody('WEGE3'), 200);
+    });
+    final stock = await service.getQuote('WEGE3');
+    expect(stock.symbol, 'WEGE3');
+    expect(stock.history, isEmpty);
+    expect(urls, hasLength(3));
+  });
+
+  test('getQuote: 401 em todas as tentativas vira unauthorized', () async {
+    final service = brapiWith((_) async => http.Response('{}', 401));
+    await expectLater(
+      service.getQuote('WEGE3'),
+      throwsA(isA<BrapiException>().having((e) => e.failure, 'failure', QuoteFailure.unauthorized)),
+    );
+  });
+
+  test('getQuote não insiste quando há limite de requisições', () async {
+    var calls = 0;
+    final service = brapiWith((_) async {
+      calls++;
+      return http.Response('', 429);
+    });
+    await expectLater(service.getQuote('WEGE3'), throwsA(isA<BrapiException>()));
+    expect(calls, 3); // 1 + 2 repetições da primeira tentativa; sem as outras tentativas
+  });
 }
