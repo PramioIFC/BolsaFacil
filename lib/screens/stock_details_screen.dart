@@ -43,7 +43,7 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
       error = null;
     });
     try {
-      final value = await widget.state.api.getQuote(
+      final value = await widget.state.brapiService.getQuote(
         widget.initialStock.symbol,
         range: requestedRange,
       );
@@ -116,11 +116,35 @@ class _StockDetailsScreenState extends State<StockDetailsScreen> {
           ),
         ]))),
         const SizedBox(height: 16),
-        Card(child: Padding(padding: const EdgeInsets.all(18), child: Row(children: [
-          Expanded(child: _Metric(label: 'Moeda', value: current.currency)),
-          Container(width: 1, height: 38, color: Colors.blueGrey.shade100),
-          Expanded(child: _Metric(label: 'Valor de mercado', value: current.marketCap == null ? '—' : _compact(current.marketCap!))),
+        Card(child: Padding(padding: const EdgeInsets.all(18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Row(children: [Icon(Icons.monitor_heart_outlined, color: primary), SizedBox(width: 10), Text('Saúde da Empresa', style: TextStyle(color: ink, fontSize: 18, fontWeight: FontWeight.w900))]),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(child: _Metric(label: 'P/L', value: current.trailingPE?.toStringAsFixed(2) ?? '—')),
+            Container(width: 1, height: 38, color: Colors.blueGrey.shade100),
+            Expanded(child: _Metric(label: 'P/VP', value: current.priceToBook?.toStringAsFixed(2) ?? '—')),
+            Container(width: 1, height: 38, color: Colors.blueGrey.shade100),
+            Expanded(child: _Metric(label: 'Margem', value: current.profitMargins != null ? '${(current.profitMargins! * 100).toStringAsFixed(1)}%' : '—')),
+          ]),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(child: _Metric(label: 'V. Mercado', value: current.marketCap == null ? '—' : _compact(current.marketCap!))),
+            Container(width: 1, height: 38, color: Colors.blueGrey.shade100),
+            Expanded(child: _Metric(label: 'Dívida', value: current.totalDebt == null ? '—' : _compact(current.totalDebt!))),
+            Container(width: 1, height: 38, color: Colors.blueGrey.shade100),
+            Expanded(child: _Metric(label: 'Caixa', value: current.totalCash == null ? '—' : _compact(current.totalCash!))),
+          ]),
         ]))),
+        if (current.dividendYield != null && current.dividendYield! > 0) ...[
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [Icon(Icons.payments_outlined, color: Colors.green.shade600), const SizedBox(width: 10), const Text('Dividendos', style: TextStyle(color: ink, fontSize: 18, fontWeight: FontWeight.w900))]),
+            const SizedBox(height: 12),
+            Text('Dividend Yield: ${(current.dividendYield! * 100).toStringAsFixed(2)}%', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 8),
+            Text('Se você investir R\$ 1.000 hoje, a projeção com base no último ano é receber aproximadamente R\$ ${(1000 * current.dividendYield!).toStringAsFixed(2)} em proventos nos próximos 12 meses.', style: const TextStyle(color: Colors.blueGrey, height: 1.4)),
+          ]))),
+        ],
         const SizedBox(height: 16),
         _BuyCard(state: widget.state, stock: current),
       ]),

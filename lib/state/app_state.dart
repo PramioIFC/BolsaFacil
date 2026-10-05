@@ -1,16 +1,20 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../database/app_database.dart';
 import '../models/portfolio_item.dart';
 import '../models/stock.dart';
 import '../models/user_account.dart';
+import '../services/api_service.dart';
 import '../services/brapi_service.dart';
 
 class AppState extends ChangeNotifier {
-  AppState(this.api, this.database);
+  AppState(this.brapiService, this.api);
 
-  final BrapiService api;
-  final AppDatabase database;
+  final BrapiService brapiService;
+  final ApiService api;
+  AppDatabase get db => AppDatabase.instance;
+
   static const defaultSymbols = [
     'PETR4', 'VALE3', 'ITUB4', 'BBDC4', 'ABEV3', 'WEGE3', 'BBAS3', 'MGLU3'
   ];
@@ -27,7 +31,21 @@ class AppState extends ChangeNotifier {
 
   Future<void> initialize() async {
     try {
-      currentUser = await database.restoreSession();
+      if (kIsWeb) {
+        final prefs = await SharedPreferences.getInstance();
+        final savedToken = prefs.getString('auth_token');
+        if (savedToken != null) {
+          api.setToken(savedToken);
+          currentUser = await api.me();
+        }
+        if (currentUser == null) {
+          api.setToken(null);
+          await prefs.remove('auth_token');
+        }
+      } else {
+        currentUser = await db.getSession();
+      }
+
       if (currentUser != null) {
         await _loadUserData();
         await refresh();
@@ -43,23 +61,39 @@ class AppState extends ChangeNotifier {
     required String email,
     required String password,
   }) async {
-    currentUser = await database.register(
-      name: name,
-      email: email,
-      password: password,
-    );
+    if (kIsWeb) {
+      final result = await api.register(name: name, email: email, password: password);
+      currentUser = result.user;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('auth_token', result.token);
+    } else {
+      currentUser = await db.register(name: name, email: email, password: password);
+    }
     await _loadUserData();
     await refresh();
   }
 
   Future<void> login(String email, String password) async {
-    currentUser = await database.login(email, password);
+    if (kIsWeb) {
+      final result = await api.login(email: email, password: password);
+      currentUser = result.user;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('auth_token', result.token);
+    } else {
+      currentUser = await db.login(email, password);
+    }
     await _loadUserData();
     await refresh();
   }
 
   Future<void> logout() async {
-    await database.logout();
+    if (kIsWeb) {
+      await api.logout();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('auth_token');
+    } else {
+      await db.logout();
+    }
     currentUser = null;
     favorites = {};
     portfolio = [];
@@ -69,9 +103,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _loadUserData() async {
-    final userId = currentUser!.id;
-    favorites = await database.favoritesFor(userId);
-    portfolio = await database.positionsFor(userId);
+    if (currentUser == null) return;
+    if (kIsWeb) {
+      favorites = await api.getFavorites();
+      portfolio = await api.getPositions();
+    } else {
+      favorites = await db.getFavorites(currentUser!.id);
+      portfolio = await db.getPositions(currentUser!.id);
+    }
   }
 
   Future<void> refresh() async {
@@ -80,7 +119,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       final symbols = {...defaultSymbols, ...favorites, ...portfolio.map((e) => e.symbol)};
-      stocks = await api.getQuotes(symbols.toList());
+      stocks = await brapiService.getQuotes(symbols.toList());
     } catch (e) {
       error = e.toString();
     } finally {
@@ -94,7 +133,7 @@ class AppState extends ChangeNotifier {
     if (normalized.isEmpty) return null;
     final found = stocks.where((stock) => stock.symbol == normalized);
     if (found.isNotEmpty) return found.first;
-    final stock = await api.getQuote(normalized);
+    final stock = await brapiService.getQuote(normalized);
     stocks = [...stocks, stock];
     notifyListeners();
     return stock;
@@ -102,19 +141,28 @@ class AppState extends ChangeNotifier {
 
   Future<void> toggleFavorite(String symbol) async {
     if (currentUser == null) return;
-    favorites.contains(symbol) ? favorites.remove(symbol) : favorites.add(symbol);
+    final isFav = favorites.contains(symbol);
+    if (isFav) {
+      favorites.remove(symbol);
+    } else {
+      favorites.add(symbol);
+    }
     notifyListeners();
-    await database.setFavorite(
-      currentUser!.id,
-      symbol,
-      favorites.contains(symbol),
-    );
+    if (kIsWeb) {
+      await api.setFavorite(symbol, !isFav);
+    } else {
+      await db.toggleFavorite(currentUser!.id, symbol, !isFav);
+    }
   }
 
   Future<void> savePosition(PortfolioItem item) async {
     if (currentUser == null) return;
     portfolio = [...portfolio.where((e) => e.symbol != item.symbol), item];
-    await database.savePosition(currentUser!.id, item);
+    if (kIsWeb) {
+      await api.savePosition(item);
+    } else {
+      await db.savePosition(currentUser!.id, item);
+    }
     notifyListeners();
     if (!stocks.any((stock) => stock.symbol == item.symbol)) await refresh();
   }
@@ -124,32 +172,27 @@ class AppState extends ChangeNotifier {
     final existing = portfolio.where((item) => item.symbol == normalized);
     if (existing.isEmpty) {
       await savePosition(
-        PortfolioItem(
-          symbol: normalized,
-          quantity: quantity,
-          averagePrice: price,
-        ),
+        PortfolioItem(symbol: normalized, quantity: quantity, averagePrice: price),
       );
       return;
     }
 
     final current = existing.first;
     final totalQuantity = current.quantity + quantity;
-    final averagePrice =
-        (current.invested + (quantity * price)) / totalQuantity;
+    final averagePrice = (current.invested + (quantity * price)) / totalQuantity;
     await savePosition(
-      PortfolioItem(
-        symbol: normalized,
-        quantity: totalQuantity,
-        averagePrice: averagePrice,
-      ),
+      PortfolioItem(symbol: normalized, quantity: totalQuantity, averagePrice: averagePrice),
     );
   }
 
   Future<void> removePosition(String symbol) async {
     if (currentUser == null) return;
     portfolio = portfolio.where((e) => e.symbol != symbol).toList();
-    await database.removePosition(currentUser!.id, symbol);
+    if (kIsWeb) {
+      await api.removePosition(symbol);
+    } else {
+      await db.removePosition(currentUser!.id, symbol);
+    }
     notifyListeners();
   }
 
@@ -159,5 +202,4 @@ class AppState extends ChangeNotifier {
     }
     return null;
   }
-
 }

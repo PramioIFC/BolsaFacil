@@ -25,8 +25,6 @@ class BrapiService {
           ? 'http://localhost:8080/api'
           : 'https://brapi.dev/api';
 
-  // Tokens nunca devem ser enviados no bundle Web. No navegador, o proxy
-  // adiciona a credencial no servidor.
   String get _token => kIsWeb ? '' : _nativeToken.trim();
 
   Map<String, String> get _headers => {
@@ -39,24 +37,26 @@ class BrapiService {
     bool historical = false,
   }) async {
     if (symbols.isEmpty) return [];
-    // O plano gratuito da brapi aceita somente um ticker por requisição.
-    // Consultas individuais também evitam perder toda a lista caso um ativo
-    // específico esteja indisponível.
-    final requests = symbols
-        .map(
-          (symbol) => _getSingleQuote(
-            symbol,
-            range: historical ? '3mo' : null,
-          ),
-        )
-        .toList();
-    final results = await Future.wait(requests);
-    final stocks = results.whereType<Stock>().toList();
+
+    final List<Stock> stocks = [];
+    
+    // O plano gratuito permite apenas 1 ticker por requisição.
+    // Fazemos as consultas de forma sequencial para não estourar o limite de requisições simultâneas.
+    for (final symbol in symbols) {
+      try {
+        final stock = await _getSingleQuote(symbol, range: historical ? '3mo' : null);
+        if (stock != null) {
+          stocks.add(stock);
+        }
+      } catch (_) {
+        // Ignora erros individuais para não quebrar a lista toda
+      }
+    }
+
     if (stocks.isEmpty) {
       throw BrapiException(
         kIsWeb
-            ? 'O proxy da brapi não está acessível. Execute '
-                '.\\run_web.ps1 para iniciar o app.'
+            ? 'O proxy da brapi não está acessível. Execute .\\run_web.ps1 para iniciar o app.'
             : 'Não foi possível carregar as cotações. Confira seu token da brapi.',
       );
     }
@@ -66,12 +66,16 @@ class BrapiService {
   Future<Stock?> _getSingleQuote(
     String symbol, {
     String? range,
+    bool fundamentals = false,
   }) async {
     final normalized = symbol.trim().toUpperCase();
     final query = <String, String>{
       if (range != null) 'range': range,
       if (range != null) 'interval': '1d',
       if (_token.isNotEmpty) 'token': _token,
+      if (fundamentals) 'modules': 'defaultKeyStatistics,financialData',
+      if (fundamentals) 'fundamental': 'true',
+      if (fundamentals) 'dividends': 'true',
     };
     final uri = Uri.parse(
       '$_baseUrl/quote/$normalized',
@@ -92,7 +96,12 @@ class BrapiService {
   }
 
   Future<Stock> getQuote(String symbol, {String range = '3mo'}) async {
-    final stock = await _getSingleQuote(symbol, range: range);
+    // Try fetching with fundamentals first for the details screen
+    Stock? stock = await _getSingleQuote(symbol, range: range, fundamentals: true);
+    // If it fails (some free API tickers don't support fundamentals), fallback to basic data
+    if (stock == null) {
+      stock = await _getSingleQuote(symbol, range: range, fundamentals: false);
+    }
     if (stock == null) throw const BrapiException('Ação não encontrada.');
     return stock;
   }

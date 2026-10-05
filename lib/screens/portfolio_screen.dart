@@ -67,27 +67,66 @@ class PortfolioScreen extends StatelessWidget {
   }
 
   Future<void> _positionDialog(BuildContext context, [PortfolioItem? existing]) async {
-    final symbol = TextEditingController(text: existing?.symbol ?? '');
-    final quantity = TextEditingController(text: existing?.quantity.toString() ?? '');
-    final price = TextEditingController(text: existing?.averagePrice.toStringAsFixed(2).replaceAll('.', ',') ?? '');
-    final result = await showDialog<PortfolioItem>(context: context, builder: (context) => AlertDialog(
-      title: Text(existing == null ? 'Nova posição' : 'Editar posição'),
+    final result = await showDialog<PortfolioItem>(
+      context: context,
+      builder: (_) => _PositionDialogContent(existing: existing),
+    );
+    if (result != null) await state.savePosition(result);
+  }
+}
+
+class _PositionDialogContent extends StatefulWidget {
+  const _PositionDialogContent({this.existing});
+  final PortfolioItem? existing;
+
+  @override
+  State<_PositionDialogContent> createState() => _PositionDialogContentState();
+}
+
+class _PositionDialogContentState extends State<_PositionDialogContent> {
+  late final TextEditingController symbol;
+  late final TextEditingController quantity;
+  late final TextEditingController price;
+
+  @override
+  void initState() {
+    super.initState();
+    symbol = TextEditingController(text: widget.existing?.symbol ?? '');
+    quantity = TextEditingController(text: widget.existing?.quantity.toString() ?? '');
+    price = TextEditingController(text: widget.existing?.averagePrice.toStringAsFixed(2).replaceAll('.', ',') ?? '');
+  }
+
+  @override
+  void dispose() {
+    symbol.dispose();
+    quantity.dispose();
+    price.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.existing == null ? 'Nova posição' : 'Editar posição'),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(controller: symbol, enabled: existing == null, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'Código da ação', hintText: 'PETR4')),
+        TextField(controller: symbol, enabled: widget.existing == null, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'Código da ação', hintText: 'PETR4')),
         const SizedBox(height: 12),
         TextField(controller: quantity, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Quantidade')),
         const SizedBox(height: 12),
         TextField(controller: price, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Preço médio de compra', prefixText: 'R\$ ')),
       ]),
-      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')), FilledButton(onPressed: () {
-        final qty = double.tryParse(quantity.text.replaceAll(',', '.'));
-        final avg = double.tryParse(price.text.replaceAll(',', '.'));
-        final ticker = symbol.text.trim().toUpperCase();
-        if (ticker.isNotEmpty && qty != null && qty > 0 && avg != null && avg > 0) Navigator.pop(context, PortfolioItem(symbol: ticker, quantity: qty, averagePrice: avg));
-      }, child: const Text('Salvar'))],
-    ));
-    symbol.dispose(); quantity.dispose(); price.dispose();
-    if (result != null) await state.savePosition(result);
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(onPressed: () {
+          final qty = double.tryParse(quantity.text.replaceAll(',', '.'));
+          final avg = double.tryParse(price.text.replaceAll(',', '.'));
+          final ticker = symbol.text.trim().toUpperCase();
+          if (ticker.isNotEmpty && qty != null && qty > 0 && avg != null && avg > 0) {
+            Navigator.pop(context, PortfolioItem(symbol: ticker, quantity: qty, averagePrice: avg));
+          }
+        }, child: const Text('Salvar'))
+      ],
+    );
   }
 }
 
@@ -97,7 +136,7 @@ class _Summary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final up = profit >= 0;
-    return Container(width: double.infinity, padding: const EdgeInsets.all(22), decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF6558F5), Color(0xFF887DF8)]), borderRadius: BorderRadius.circular(24), boxShadow: [BoxShadow(color: primary.withValues(alpha: .24), blurRadius: 24, offset: const Offset(0, 10))]), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return Container(width: double.infinity, padding: const EdgeInsets.all(22), decoration: BoxDecoration(color: const Color(0xFF38344B), borderRadius: BorderRadius.circular(24), boxShadow: [BoxShadow(color: primary.withOpacity(0.24), blurRadius: 24, offset: const Offset(0, 10))]), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('Valor atual', style: TextStyle(color: Colors.white70)),
       const SizedBox(height: 5),
       Text(money(current), style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900)),
