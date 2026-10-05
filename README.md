@@ -1,4 +1,4 @@
-# Bolsa Fácil
+# 📈 Bolsa Fácil
 
 Aplicativo Flutter para acompanhar ações da B3 (cotações da [brapi.dev](https://brapi.dev/)), favoritar ativos e simular uma carteira com compras, vendas e histórico. Os dados do usuário ficam em SQLite local (no navegador, na Web).
 

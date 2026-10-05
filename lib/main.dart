@@ -4,6 +4,7 @@ import 'database/app_database.dart';
 import 'database/db_factory.dart';
 import 'screens/app_shell.dart';
 import 'screens/auth_screen.dart';
+import 'services/api_service.dart';
 import 'services/brapi_service.dart';
 import 'state/app_state.dart';
 import 'theme.dart';

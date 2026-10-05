@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../database/app_database.dart';
 import '../models/portfolio_item.dart';
 import '../models/stock.dart';
 import '../models/trade.dart';
 import '../models/user_account.dart';
+import '../services/api_service.dart';
 import '../services/brapi_service.dart';
 import '../services/quote_repository.dart';
 

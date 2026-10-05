@@ -17,6 +17,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 const _allowedQueryParams = {
   'range',
@@ -180,6 +181,8 @@ Future<void> _handle(
     response.headers.set('Retry-After', '60');
     return _json(response, 429, {'error': 'Muitas requisições. Tente novamente em instantes.'});
   }
+  _jsonResponse(request, 200, {'ok': true});
+}
 
   final query = <String, String>{
     for (final entry in request.uri.queryParameters.entries)
