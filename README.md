@@ -213,7 +213,6 @@ O banco fica em `.data/bolsa_facil.db` na raiz do projeto (criado automaticament
 | Android    | `http://192.168.3.103:8080`     | IP local da máquina na rede Wi-Fi       |
 | Windows    | `http://192.168.3.103:8080`     | IP local da máquina na rede             |
 
-> **Produção:** Para publicar o app, faça deploy do `brapi_proxy.dart` em um VPS com Dart instalado e configure a URL do backend via `--dart-define=BRAPI_BASE_URL=https://seu-servidor.com`.
 
 ---
 
