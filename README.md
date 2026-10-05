@@ -217,16 +217,6 @@ O banco fica em `.data/bolsa_facil.db` na raiz do projeto (criado automaticament
 
 ---
 
-## 🤝 Contribuição
-
-1. Faça um fork do repositório
-2. Crie uma branch para sua feature (`git checkout -b feature/minha-feature`)
-3. Commit suas mudanças (`git commit -m 'feat: minha nova feature'`)
-4. Push para a branch (`git push origin feature/minha-feature`)
-5. Abra um Pull Request
-
----
-
 ## 📄 Licença
 
 Este projeto é de uso acadêmico, desenvolvido no [IFC — Instituto Federal Catarinense](https://ifc.edu.br/).
