@@ -1,259 +1,123 @@
 # 📈 Bolsa Fácil
 
 > Um aplicativo completo em Flutter para acompanhar o mercado de ações brasileiro, gerenciar seu portfólio de investimentos e visualizar o histórico de ativos usando dados em tempo real da [brapi.dev](https://brapi.dev/).
-Aplicativo Flutter para acompanhar ações da B3 (cotações da [brapi.dev](https://brapi.dev/)), favoritar ativos e simular uma carteira com compras, vendas e histórico. Os dados do usuário ficam em SQLite local (no navegador, na Web).
 
 ---
-Documentação: [`TECHNICAL_DOCS.md`](TECHNICAL_DOCS.md) · Mudanças desta versão: [`MELHORIAS.md`](MELHORIAS.md) · Continuação do trabalho: [`docs/HANDOFF_CODEX.md`](docs/HANDOFF_CODEX.md)
+
+**Documentação Técnica:** [`TECHNICAL_DOCS.md`](TECHNICAL_DOCS.md)  
+**Registro de Mudanças:** [`MELHORIAS.md`](MELHORIAS.md)  
+**Continuação do trabalho:** [`docs/HANDOFF_CODEX.md`](docs/HANDOFF_CODEX.md)
+
+---
 
 ## 🚀 Funcionalidades
-## Requisitos
 
-- 🔍 **Busca de Ativos:** Lista de ações com preço, variação percentual e busca por _ticker_ (código da ação).
-- 📊 **Detalhes e Gráficos:** Visualização aprofundada da empresa, histórico de preços e gráfico interativo com múltiplos períodos (1D, 5D, 1M, 6M, 1A, 5A).
-- 🔐 **Autenticação:** Cadastro e login com senha hasheada (SHA-256 + salt) e sessão persistida via token Bearer.
+- 🔍 **Busca de Ativos:** Lista de ações com preço, variação percentual e busca por _ticker_.
+- 📊 **Detalhes e Gráficos:** Visualização do histórico de preços (1D a 5A).
+- 🔐 **Autenticação:** Cadastro e login com senha hasheada (SHA-256) e sessão persistida (JWT/Bearer).
 - ⭐ **Favoritos:** Marque ações de interesse para acompanhamento rápido.
-- 💼 **Carteira Simulada:**
-  - Compra simulada com cálculo automático de preço médio.
-  - Acompanhamento de valor atual e lucro/prejuízo por ação.
-  - Remoção de posições individuais.
-- 👤 **Múltiplos Usuários:** Cada conta tem seus próprios favoritos e carteira isolados.
-- Flutter estável recente (Dart `>=3.3.0 <4.0.0`)
-- Token gratuito da brapi: <https://brapi.dev/dashboard>
-
----
-## Configuração do token
+- 💼 **Carteira Simulada:** Compra simulada com cálculo automático de preço médio e acompanhamento de lucro/prejuízo.
+- 👤 **Múltiplos Usuários:** Cada conta no banco de dados local tem sua própria carteira isolada.
+- 💾 **Backup de Dados:** Exportação e importação de todo o seu perfil (em JSON).
 
 ## 🛠️ Tecnologias Utilizadas
-| Plataforma | Onde configurar |
-|---|---|
-| Web | `.env` na raiz (`cp .env.example .env`). Lido **só pelo proxy**; nunca vai ao navegador |
-| Android / Windows | `config/dart_defines.json` (copie de `config/dart_defines.example.json`) |
 
 | Camada    | Tecnologia                        | Descrição                                         |
 | --------- | --------------------------------- | ------------------------------------------------- |
 | Frontend  | [Flutter](https://flutter.dev/)   | UI multiplataforma (Web, Android, Windows)        |
-| Estado    | `ChangeNotifier` (nativo)         | Gerenciamento de estado via `AppState`             |
+| Estado    | `ChangeNotifier`                  | Gerenciamento de estado via `AppState`             |
 | Gráficos  | `fl_chart`                        | Renderização dos gráficos de histórico             |
-| HTTP      | `http` (Dart)                     | Comunicação entre frontend e backend               |
-| Sessão    | `shared_preferences`              | Armazena o token de autenticação no dispositivo    |
-| Backend   | Dart puro (`HttpServer`)          | Servidor REST rodando na porta `8080`              |
-| Banco     | `sqflite_common_ffi` (SQLite)     | Banco de dados no lado do servidor                 |
-| Segurança | `crypto` (SHA-256)                | Hash de senhas com salt aleatório                  |
+| HTTP      | `http` (Dart)                     | Comunicação com backend e Brapi                    |
+| Sessão    | `shared_preferences` / SQLite     | Armazena o token e dados localmente                |
+| Backend   | Dart puro (`HttpServer`)          | Servidor REST local rodando na porta `8080`        |
+| Banco     | `sqflite_common_ffi` (SQLite)     | Banco de dados no lado do servidor / web           |
+| Segurança | `crypto` (SHA-256)                | Hash de senhas                                     |
 | API       | [brapi.dev](https://brapi.dev/)   | Dados financeiros do mercado brasileiro            |
-## Executar
-
----
-```bash
-flutter pub get
 
 ## 🏗️ Arquitetura
-# Web (precisa do proxy): terminal 1
-dart run tool/brapi_proxy.dart
-# terminal 2
-flutter run -d chrome --web-port 3000
-# (Windows: .\run_web.ps1 faz os dois passos)
 
-O projeto segue uma arquitetura **cliente-servidor**. O frontend Flutter **não** possui banco de dados próprio — toda a persistência de dados (usuários, carteira, favoritos) é feita pelo backend em Dart via requisições HTTP.
+O projeto segue uma arquitetura **cliente-servidor local**. A persistência de dados (usuários, carteira, favoritos) é feita pelo backend em Dart via chamadas HTTP locais. O servidor local (`tool/brapi_proxy.dart`) atua como Proxy para não expor as chaves da Brapi e burlar as restrições de CORS da Web.
 
-```
+```text
 ┌─────────────────────────┐         ┌──────────────────────────────┐
 │      Flutter App         │  HTTP   │   Backend Dart (porta 8080)  │
 │                         │────────▶│                              │
 │  • HomeScreen           │         │  /auth/*    → Autenticação   │
 │  • StockDetailsScreen   │         │  /data/*    → CRUD Dados     │
 │  • PortfolioScreen      │◀────────│  /api/*     → Proxy Brapi    │
-│  • FavoritesScreen      │         │                              │
-│  • AuthScreen           │         │  SQLite: .data/bolsa_facil.db│
 └─────────────────────────┘         └──────────────────────────────┘
                                               │
                                               ▼
                                     ┌──────────────────┐
                                     │   brapi.dev API   │
                                     └──────────────────┘
-# Android / Windows (chama a brapi direto)
-flutter run --dart-define-from-file=config/dart_defines.json
 ```
-
----
-### SQLite na Web (WebAssembly)
-
-## 📂 Estrutura do Projeto
-A Web usa `sqflite_common_ffi_web`. Os arquivos `web/sqlite3.wasm` e `web/sqflite_sw.js` precisam ser da **mesma versão** do pacote resolvido. Depois de `flutter pub get` (e a cada atualização do pacote), rode:
-
-```bash
-dart run sqflite_common_ffi_web:setup
-```
-bolsa_facil/
-├── lib/
-│   ├── main.dart                    # Ponto de entrada do app
-│   ├── theme.dart                   # Tema e cores do Material Design
-│   ├── database/
-│   │   └── app_database.dart        # Banco SQLite local (sessão offline)
-│   ├── models/
-│   │   ├── stock.dart               # Modelo de ação (ticker, preço, variação)
-│   │   ├── portfolio_item.dart      # Modelo de posição na carteira
-│   │   └── user_account.dart        # Modelo de conta do usuário
-│   ├── screens/
-│   │   ├── app_shell.dart           # Shell com navegação inferior (BottomNav)
-│   │   ├── auth_screen.dart         # Tela de login e cadastro
-│   │   ├── home_screen.dart         # Lista de ações com busca
-│   │   ├── stock_details_screen.dart # Detalhes + gráfico + compra simulada
-│   │   ├── portfolio_screen.dart    # Carteira do usuário
-│   │   ├── favorites_screen.dart    # Ações favoritadas
-│   │   └── account_screen.dart      # Informações da conta e logout
-│   ├── services/
-│   │   ├── api_service.dart         # Cliente HTTP para o backend (auth, dados)
-│   │   └── brapi_service.dart       # Cliente HTTP para cotações via proxy
-│   ├── state/
-│   │   └── app_state.dart           # Estado global (ChangeNotifier)
-│   └── widgets/
-│       └── stock_tile.dart          # Widget reutilizável de ação na lista
-├── tool/
-│   └── brapi_proxy.dart             # Backend completo (servidor + proxy + banco)
-├── run_web.ps1                      # Script PowerShell para rodar tudo junto
-├── .env.example                     # Exemplo de variáveis de ambiente
-├── pubspec.yaml                     # Dependências do projeto
-└── README.md
-```
-
----
-
-## 🔌 API do Backend — Referência de Endpoints
-
-O backend roda em `http://localhost:8080` e expõe as seguintes rotas:
-
-### Autenticação
-
-| Método | Rota             | Body (JSON)                                  | Resposta                                      |
-| ------ | ---------------- | -------------------------------------------- | --------------------------------------------- |
-| `POST` | `/auth/register` | `{ "name", "email", "password" }`            | `201` `{ "token", "user": { id, name, email } }` |
-| `POST` | `/auth/login`    | `{ "email", "password" }`                    | `200` `{ "token", "user": { id, name, email } }` |
-| `POST` | `/auth/logout`   | —                                            | `200` `{ "ok": true }`                        |
-| `GET`  | `/auth/me`       | —                                            | `200` `{ "user": { id, name, email } }`       |
-
-> Todas as rotas abaixo exigem o header `Authorization: Bearer <token>`.
-
-### Dados do Usuário
-
-| Método   | Rota               | Body (JSON)                                      | Resposta                           |
-| -------- | ------------------ | ------------------------------------------------ | ---------------------------------- |
-| `GET`    | `/data/positions`  | —                                                | `{ "positions": [...] }`           |
-| `POST`   | `/data/positions`  | `{ "symbol", "quantity", "averagePrice" }`       | `{ "ok": true }`                   |
-| `DELETE` | `/data/positions`  | Query: `?symbol=PETR4`                           | `{ "ok": true }`                   |
-| `GET`    | `/data/favorites`  | —                                                | `{ "favorites": ["PETR4", ...] }`  |
-| `POST`   | `/data/favorites`  | `{ "symbol", "favorite": true/false }`           | `{ "ok": true }`                   |
-
-### Proxy da Brapi
-
-| Método | Rota      | Descrição                                                   |
-| ------ | --------- | ----------------------------------------------------------- |
-| `GET`  | `/api/*`  | Repassa a requisição para `brapi.dev` com o token injetado  |
-
----
-
-## 🗄️ Banco de Dados (SQLite)
-
-O banco fica em `.data/bolsa_facil.db` na raiz do projeto (criado automaticamente pelo backend).
-
-**Tabelas:**
-
-| Tabela      | Descrição                        | Chave Primária         |
-| ----------- | -------------------------------- | ---------------------- |
-| `users`     | Contas de usuário                | `id` (autoincrement)   |
-| `sessions`  | Sessões ativas (token Bearer)    | `token`                |
-| `positions` | Posições na carteira             | `(user_id, symbol)`    |
-| `favorites` | Ações favoritadas                | `(user_id, symbol)`    |
-
----
 
 ## 💻 Como Rodar o Projeto Localmente
 
 ### Pré-requisitos
+- Flutter SDK (`>=3.3.0 <4.0.0`)
+- Token gratuito da brapi: [brapi.dev/dashboard](https://brapi.dev/dashboard)
 
-- [Flutter SDK](https://docs.flutter.dev/get-started/install) (versão 3.24 ou superior)
-- [Dart SDK](https://dart.dev/get-dart) (incluído no Flutter)
-- Chave de API da [brapi.dev](https://brapi.dev/) (conta gratuita)
+### 1. Clonar e Instalar
+```bash
+git clone https://github.com/PramioIFC/BolsaFacil.git
+cd BolsaFacil
+flutter pub get
+```
 
-### Passo a Passo
+### 2. Configurar o Token da Brapi
+Crie um arquivo `.env` na raiz do projeto copiando o exemplo:
+```bash
+cp .env.example .env
+```
+Abra o `.env` e coloque seu token: `BRAPI_TOKEN=seu_token_aqui`. Este token nunca vai ao navegador, sendo lido apenas pelo seu proxy local.
 
-1. **Clone o repositório:**
+Para **Android/Windows** nativo, configure também em `config/dart_defines.json` (copie de `config/dart_defines.example.json`).
 
-   ```bash
-   git clone https://github.com/PramioIFC/BolsaFacil.git
-   cd BolsaFacil
-   ```
+### 3. Rodar o Backend e o Frontend
+**Via atalho (Windows):**
+```powershell
+.\run_web.ps1
+```
+Este script subirá o backend local e o app Flutter no Chrome na porta 3000 automaticamente.
 
-2. **Instale as dependências:**
+**Modo Manual (Dois Terminais):**
+```bash
+# Terminal 1 - Backend e Proxy
+dart run tool/brapi_proxy.dart
 
-   ```bash
-   flutter pub get
-   ```
+# Terminal 2 - Frontend Web
+flutter run -d chrome --web-port 3000
+```
 
-3. **Configure o token da Brapi:**
+## 🔌 API do Backend e Banco de Dados
 
-   Crie um arquivo `.env` na raiz do projeto (copie o `.env.example`) e preencha seu token:
+O backend escuta em `127.0.0.1:8080` (e limite de 120 req/min por IP).  
+O banco SQLite é criado automaticamente em `.data/bolsa_facil.db`.
 
-   ```env
-   BRAPI_TOKEN=seu_token_aqui
-   ```
+**Tabelas do Banco SQLite:**
+- `users`: Contas de usuário
+- `sessions`: Sessões ativas (token Bearer)
+- `positions`: Posições na carteira `(user_id, symbol)`
+- `favorites`: Ações favoritadas `(user_id, symbol)`
 
-   > O token é usado **apenas pelo backend** para autenticar nas requisições à brapi.dev.
+*(Para mais detalhes dos endpoints REST, consulte a documentação técnica).*
 
-4. **Inicie o Backend:**
+## ⚙️ SQLite na Web (WebAssembly)
+A versão Web do aplicativo utiliza `sqflite_common_ffi_web`. Após dar `flutter pub get` ou atualizar dependências, rode o comando abaixo para compilar os binários do SQLite local:
+```bash
+dart run sqflite_common_ffi_web:setup
+```
 
-   ```bash
-   dart run tool/brapi_proxy.dart
-   ```
-
-   O servidor ficará ativo em `http://localhost:8080`. Ele precisa estar rodando para o app funcionar.
-
-5. **Inicie o App Flutter** (em outro terminal):
-
-   ```bash
-   # Web
-   flutter run -d chrome
-
-   # Android (com dispositivo/emulador conectado)
-   flutter run
-
-   # Windows
-   flutter run -d windows
-   ```
-
-6. **Atalho (Windows):** Para iniciar backend e app juntos:
-
-   ```powershell
-   .\run_web.ps1
-   ```
-
----
-
-## 🌐 Configuração de Rede
-
-| Plataforma | URL padrão do backend           | Observação                              |
-| ---------- | ------------------------------- | --------------------------------------- |
-| Web        | `http://localhost:8080`         | Acesso direto via loopback              |
-| Android    | `http://192.168.3.103:8080`     | IP local da máquina na rede Wi-Fi       |
-| Windows    | `http://192.168.3.103:8080`     | IP local da máquina na rede             |
-## Testes e análise
-
+## ✅ Testes e Análise
+O projeto possui CI configurado no GitHub Actions. Para rodar as validações localmente:
 ```bash
 flutter analyze
 flutter test
 ```
 
----
-O CI (`.github/workflows/ci.yml`) roda análise, testes e `flutter build web`.
-
 ## 📄 Licença
-## Proxy (`tool/brapi_proxy.dart`)
-
 Este projeto é de uso acadêmico, desenvolvido no [IFC — Instituto Federal Catarinense](https://ifc.edu.br/).
-Só encaminha `GET /api/quote/{ticker}` para a brapi, injetando o token. Escuta em `127.0.0.1:8080` por padrão, aceita CORS apenas de `localhost`/`127.0.0.1` e limita 120 req/min por IP. Variáveis: `BRAPI_TOKEN`, `PROXY_HOST`, `PORT`, `ALLOWED_ORIGINS`, `RATE_LIMIT`.
-
----
-## Backup
 
 **Desenvolvido com Flutter 💙**
-Conta → **Exportar backup** copia um JSON (favoritos e operações, sem senha). **Importar backup** o restaura, substituindo os dados atuais.
